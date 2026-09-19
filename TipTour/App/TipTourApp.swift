@@ -48,7 +48,7 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
         let harnessServer = TipTourHarnessServer(
             tipTourEngine: companionManager.tipTourEngine,
             activityReporter: { [weak self] activityText in
-                self?.companionManager.reportHermesHarnessActivity(activityText)
+                self?.companionManager.reportHarnessActivity(activityText)
             }
         )
         harnessServer.start()

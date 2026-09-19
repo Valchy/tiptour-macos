@@ -25,19 +25,19 @@ struct CompanionPanelView: View {
                 .padding(.top, 16)
                 .padding(.horizontal, 16)
 
-            if !companionManager.allPermissionsGranted {
+            if !companionManager.hasDesktopPermissions {
                 Spacer().frame(height: 16)
                 permissionsListSection
                     .padding(.horizontal, 16)
             }
 
-            if !companionManager.hasCompletedOnboarding && companionManager.allPermissionsGranted {
+            if !companionManager.hasCompletedOnboarding && companionManager.hasDesktopPermissions {
                 Spacer().frame(height: 16)
                 startButton
                     .padding(.horizontal, 16)
             }
 
-            if companionManager.hasCompletedOnboarding && companionManager.allPermissionsGranted {
+            if companionManager.hasCompletedOnboarding && companionManager.hasDesktopPermissions {
                 Spacer().frame(height: 12)
                 readyControlSection
                     .padding(.horizontal, 16)
@@ -135,12 +135,18 @@ struct CompanionPanelView: View {
 
     @ViewBuilder
     private var primaryMessageSection: some View {
-        if companionManager.hasCompletedOnboarding && companionManager.allPermissionsGranted {
-            Text("Ctrl+K to type. Ctrl+Option to speak.")
+        if companionManager.hasCompletedOnboarding && companionManager.hasDesktopPermissions {
+            VStack(alignment: .leading, spacing: 8) {
+                Label("Gemini realtime  ·  Ctrl+Option", systemImage: "waveform")
+                Label("JEV text  ·  Ctrl+K", systemImage: "text.cursor")
+                Text("Add your keys in Settings → Models")
+                    .font(.system(size: 10))
+                    .foregroundColor(DS.Colors.textTertiary)
+            }
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundColor(DS.Colors.textSecondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
-        } else if companionManager.allPermissionsGranted {
+        } else if companionManager.hasDesktopPermissions {
             Text("You're all set. Hit Start to meet TipTour.")
                 .font(.system(size: 12, weight: .medium))
                 .foregroundColor(DS.Colors.textSecondary)
@@ -151,7 +157,7 @@ struct CompanionPanelView: View {
                     .font(.system(size: 12, weight: .bold))
                     .foregroundColor(DS.Colors.textSecondary)
 
-                Text("Some permissions were revoked. Grant the four below to keep using TipTour.")
+                Text("Some permissions were revoked. Grant desktop access below. Microphone is only for voice.")
                     .font(.system(size: 11))
                     .foregroundColor(DS.Colors.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -221,22 +227,13 @@ struct CompanionPanelView: View {
                     companionManager.setScreenshotStreamingEnabled(!companionManager.isScreenshotStreamingEnabled)
                 }
 
-                compactControlButton(
-                    title: longTaskRouterTitle,
-                    subtitle: isLongTaskRouterEnabled ? "router" : "planner",
-                    systemImage: isLongTaskRouterEnabled ? "link" : "bolt",
-                    isActive: isLongTaskRouterEnabled,
-                    helpText: "Toggle long-task routing"
-                ) {
-                    companionManager.setHermesOrchestratorEnabled(!companionManager.isHermesOrchestratorEnabled)
-                }
             }
 
             if let activityText = companionManager.textCommandActivityText, !activityText.isEmpty {
                 HStack(spacing: 6) {
-                    ProgressView()
-                        .controlSize(.small)
-                        .scaleEffect(0.55)
+                    if companionManager.isTextCommandRunning {
+                        ProgressView().controlSize(.small).scaleEffect(0.55)
+                    }
                     Text(activityText)
                         .font(.system(size: 10, weight: .medium))
                         .foregroundColor(DS.Colors.textTertiary)
@@ -299,7 +296,7 @@ struct CompanionPanelView: View {
 
     @ViewBuilder
     private var startButton: some View {
-        if !companionManager.hasCompletedOnboarding && companionManager.allPermissionsGranted {
+        if !companionManager.hasCompletedOnboarding && companionManager.hasDesktopPermissions {
             Button(action: {
                 companionManager.triggerOnboarding()
             }) {
@@ -336,13 +333,13 @@ struct CompanionPanelView: View {
                 screenContentPermissionRow
             }
 
-            if !companionManager.allPermissionsGranted {
+            if !companionManager.hasDesktopPermissions {
                 HStack(alignment: .top, spacing: 6) {
                     Image(systemName: "lock.shield")
                         .font(.system(size: 10))
                         .foregroundColor(DS.Colors.textTertiary)
                         .padding(.top, 1)
-                    Text("Everything stays on your Mac until you talk. Audio and optional screenshots are sent only to Gemini Live.")
+                    Text("Gemini receives audio and optional screenshots. JEV receives your typed task and detected screen labels.")
                         .font(.system(size: 10))
                         .foregroundColor(DS.Colors.textTertiary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -483,7 +480,7 @@ struct CompanionPanelView: View {
                     .padding(.top, 1)
 
                 VStack(alignment: .leading, spacing: 1) {
-                    Text("Microphone")
+                    Text("Microphone · voice only")
                         .font(.system(size: 13, weight: .medium))
                         .foregroundColor(DS.Colors.textSecondary)
                     Text("So you can hold ⌃⌥ and talk to me.")
@@ -540,302 +537,9 @@ struct CompanionPanelView: View {
         .pointerCursor()
     }
 
-    // MARK: - Autopilot Toggle
-
-    /// Promotes TipTour from teaching ("show me how") to autopilot
-    /// ("do it for me"). When ON, the cursor flies to each resolved
-    /// element and TipTour clicks it for the user; workflow plans
-    /// drive themselves end-to-end (including keyboard shortcuts and
-    /// text typing). When OFF, TipTour only points and the
-    /// user clicks themselves.
-    ///
-    /// We give this prominence in the panel — same row weight as Neko
-    /// — because it's a real change in behavior the user should be
-    /// aware of every time they open the panel.
-    private var autopilotToggleRow: some View {
-        HStack {
-            HStack(spacing: 8) {
-                Image(systemName: companionManager.isAutopilotEnabled
-                      ? "wand.and.stars"
-                      : "hand.tap")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(
-                        companionManager.isAutopilotEnabled
-                            ? DS.Colors.accent
-                            : DS.Colors.textTertiary
-                    )
-                    .frame(width: 16)
-
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("Autopilot")
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(DS.Colors.textSecondary)
-                    Text(
-                        companionManager.isAutopilotEnabled
-                            ? "TipTour clicks for you"
-                            : "TipTour only points; you click"
-                    )
-                    .font(.system(size: 10))
-                    .foregroundColor(DS.Colors.textTertiary)
-                }
-            }
-
-            Spacer()
-
-            Toggle("", isOn: Binding(
-                get: { companionManager.isAutopilotEnabled },
-                set: { companionManager.setAutopilotEnabled($0) }
-            ))
-            .toggleStyle(.switch)
-            .labelsHidden()
-            .tint(DS.Colors.accent)
-            .scaleEffect(0.8)
-        }
-        .padding(.vertical, 4)
-    }
-
-    // MARK: - Screenshot Streaming Toggle
-
-    /// Privacy toggle for whether Gemini Live receives screen JPEGs.
-    /// Local overlays and action execution can still use local context;
-    /// this only controls remote visual context sent to Gemini.
-    private var screenshotStreamingToggleRow: some View {
-        HStack {
-            HStack(spacing: 8) {
-                Image(systemName: companionManager.isScreenshotStreamingEnabled
-                      ? "eye"
-                      : "eye.slash")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(
-                        companionManager.isScreenshotStreamingEnabled
-                            ? DS.Colors.accent
-                            : DS.Colors.textTertiary
-                    )
-                    .frame(width: 16)
-
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("Screenshots")
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(DS.Colors.textSecondary)
-                    Text(
-                        companionManager.isScreenshotStreamingEnabled
-                            ? "Gemini can see your screen"
-                            : "voice + local tools only"
-                    )
-                    .font(.system(size: 10))
-                    .foregroundColor(DS.Colors.textTertiary)
-                }
-            }
-
-            Spacer()
-
-            Toggle("", isOn: Binding(
-                get: { companionManager.isScreenshotStreamingEnabled },
-                set: { companionManager.setScreenshotStreamingEnabled($0) }
-            ))
-            .toggleStyle(.switch)
-            .labelsHidden()
-            .tint(DS.Colors.accent)
-            .scaleEffect(0.8)
-        }
-        .padding(.vertical, 4)
-    }
-
-    // MARK: - Grounding Toggle
-
-    private var accurateGroundingToggleRow: some View {
-        HStack {
-            HStack(spacing: 8) {
-                Image(systemName: companionManager.isAccurateGroundingEnabled
-                      ? "scope"
-                      : "scope")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(
-                        companionManager.isAccurateGroundingEnabled
-                            ? DS.Colors.accent
-                            : DS.Colors.textTertiary
-                    )
-                    .frame(width: 16)
-
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("Accurate Grounding")
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(DS.Colors.textSecondary)
-                    Text(
-                        companionManager.isAccurateGroundingEnabled
-                            ? "local YOLO + OCR targets"
-                            : "standard AX/CDP grounding"
-                    )
-                    .font(.system(size: 10))
-                    .foregroundColor(DS.Colors.textTertiary)
-                }
-            }
-
-            Spacer()
-
-            Toggle("", isOn: Binding(
-                get: { companionManager.isAccurateGroundingEnabled },
-                set: { companionManager.setAccurateGroundingEnabled($0) }
-            ))
-            .toggleStyle(.switch)
-            .labelsHidden()
-            .tint(DS.Colors.accent)
-            .scaleEffect(0.8)
-        }
-        .padding(.vertical, 4)
-    }
-
-    // MARK: - Connections
-
-    private var connectionsSection: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("CONNECTIONS")
-                .font(.system(size: 9, weight: .semibold, design: .rounded))
-                .tracking(0.4)
-                .foregroundColor(DS.Colors.textTertiary)
-
-            connectionToggleRow(
-                title: "CUA Driver",
-                subtitle: companionManager.isCuaActionDriverEnabled
-                    ? "desktop actions enabled"
-                    : "actions paused",
-                systemImage: "cursorarrow",
-                isOn: Binding(
-                    get: { companionManager.isCuaActionDriverEnabled },
-                    set: { companionManager.setCuaActionDriverEnabled($0) }
-                )
-            )
-
-            connectionToggleRow(
-                title: "Hermes Auto",
-                subtitle: companionManager.isHermesOrchestratorEnabled
-                    ? "auto delegate long tasks"
-                    : "TipTour stays local",
-                systemImage: "link",
-                isOn: Binding(
-                    get: { companionManager.isHermesOrchestratorEnabled },
-                    set: { companionManager.setHermesOrchestratorEnabled($0) }
-                )
-            )
-        }
-        .padding(.vertical, 6)
-        .padding(.horizontal, 10)
-        .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(Color.white.opacity(0.035))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(DS.Colors.borderSubtle, lineWidth: 0.5)
-        )
-    }
-
-    private var isLongTaskRouterEnabled: Bool {
-        companionManager.isHermesOrchestratorEnabled
-    }
-
-    private var longTaskRouterTitle: String {
-        if companionManager.isHermesOrchestratorEnabled {
-            return "Hermes"
-        }
-        return "Local"
-    }
-
-    private func connectionToggleRow(
-        title: String,
-        subtitle: String,
-        systemImage: String,
-        isOn: Binding<Bool>
-    ) -> some View {
-        HStack {
-            HStack(spacing: 8) {
-                Image(systemName: systemImage)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(isOn.wrappedValue ? DS.Colors.accent : DS.Colors.textTertiary)
-                    .frame(width: 16)
-
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(title)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(DS.Colors.textSecondary)
-                    Text(subtitle)
-                        .font(.system(size: 10))
-                        .foregroundColor(DS.Colors.textTertiary)
-                }
-            }
-
-            Spacer()
-
-            Toggle("", isOn: isOn)
-                .toggleStyle(.switch)
-                .labelsHidden()
-                .tint(DS.Colors.accent)
-                .scaleEffect(0.8)
-        }
-        .padding(.vertical, 3)
-    }
-
-    /// Whimsical toggle that swaps the blue triangle cursor for a
-    /// pixel-art cat (classic oneko sprites).
-    private var nekoModeToggleRow: some View {
-        HStack {
-            HStack(spacing: 8) {
-                Image(systemName: "cat.fill")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(
-                        companionManager.isNekoModeEnabled
-                            ? DS.Colors.accent
-                            : DS.Colors.textTertiary
-                    )
-                    .frame(width: 16)
-
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("Neko mode")
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(DS.Colors.textSecondary)
-                    Text("replace cursor with a pixel cat")
-                        .font(.system(size: 10))
-                        .foregroundColor(DS.Colors.textTertiary)
-                }
-            }
-
-            Spacer()
-
-            Toggle("", isOn: Binding(
-                get: { companionManager.isNekoModeEnabled },
-                set: { companionManager.setNekoModeEnabled($0) }
-            ))
-            .toggleStyle(.switch)
-            .labelsHidden()
-            .tint(DS.Colors.accent)
-            .scaleEffect(0.8)
-        }
-        .padding(.vertical, 4)
-    }
-
-    // MARK: - Footer
-
-    private var feedbackButton: some View {
-        Button(action: {
-            if let url = URL(string: "https://x.com/milindlabs") {
-                NSWorkspace.shared.open(url)
-            }
-        }) {
-            Image(systemName: "bubble.left")
-                .font(.system(size: 11, weight: .medium))
-                .frame(width: 24, height: 24)
-                .foregroundColor(DS.Colors.textTertiary)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .pointerCursor()
-        .help("Feedback")
-    }
-
     private var footerSection: some View {
         VStack(spacing: 0) {
             HStack(spacing: 0) {
-                feedbackButton
 
                 footerIconButton("Settings", systemImage: "gearshape") {
                     NotificationCenter.default.post(name: .tipTourOpenSettings, object: nil)
@@ -905,7 +609,7 @@ struct CompanionPanelView: View {
     }
 
     private var statusText: String {
-        if !companionManager.hasCompletedOnboarding || !companionManager.allPermissionsGranted {
+        if !companionManager.hasCompletedOnboarding || !companionManager.hasDesktopPermissions {
             return "Setup"
         }
         if !companionManager.isOverlayVisible {

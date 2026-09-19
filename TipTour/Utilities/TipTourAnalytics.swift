@@ -72,7 +72,7 @@ enum TipTourAnalytics {
         ])
     }
 
-    /// Claude responded and the response is being spoken via TTS.
+    /// Gemini responded with speech.
     static func trackAIResponseReceived(response: String) {
         PostHogSDK.shared.capture("ai_response_received", properties: [
             "response": response,
@@ -80,8 +80,7 @@ enum TipTourAnalytics {
         ])
     }
 
-    /// Claude's response included a [POINT:x,y:label] coordinate tag,
-    /// so the buddy is flying to point at a UI element.
+    /// The pointer is moving to a grounded UI element.
     static func trackElementPointed(elementLabel: String?) {
         PostHogSDK.shared.capture("element_pointed", properties: [
             "element_label": elementLabel ?? "unknown"

@@ -16,12 +16,13 @@ struct TextCommandPanelView: View {
                     .foregroundColor(DS.Colors.textTertiary)
                     .frame(width: 16, height: 16)
 
-                TextField("Ask TipTour...", text: $commandText)
+                TextField("Ask JEV to click something…", text: $commandText)
                     .textFieldStyle(.plain)
                     .font(.system(size: 13, weight: .regular))
                     .foregroundColor(DS.Colors.textPrimary)
                     .tint(DS.Colors.textSecondary)
                     .focused($isInputFocused)
+                    .disabled(companionManager.isTextCommandRunning)
                     .onSubmit {
                         submitCommand()
                     }
@@ -29,22 +30,38 @@ struct TextCommandPanelView: View {
                         commandText = ""
                         companionManager.dismissTextCommandPanel()
                     }
+                if companionManager.isTextCommandRunning {
+                    Button { companionManager.cancelTextCommand() } label: {
+                        Image(systemName: "stop.fill")
+                    }
+                    .buttonStyle(.plain)
+                    .pointerCursor()
+                    .help("Stop JEV")
+                    .accessibilityLabel("Stop JEV")
+                }
             }
             .frame(height: 18)
 
             ZStack(alignment: .leading) {
                 TextCommandActivityTicker(
                     text: activityText,
-                    isActive: companionManager.voiceState == .processing
+                    isActive: companionManager.isTextCommandRunning
                 )
                 .opacity(hasActivityText ? 1 : 0)
             }
             .frame(height: 14)
             .clipped()
+
+            // The Jev loop's live decision. The panel is never dismissed on
+            // submit (only Escape dismisses it), so this stays on screen for
+            // the whole run.
+            if let step = companionManager.jevStep {
+                JevStepPanelView(snapshot: step)
+            }
         }
         .padding(.horizontal, 13)
         .padding(.vertical, 10)
-        .frame(width: 340, height: 64, alignment: .topLeading)
+        .frame(width: 340, height: panelHeight, alignment: .topLeading)
         .background(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .fill(DS.Colors.background.opacity(0.96))
@@ -55,6 +72,8 @@ struct TextCommandPanelView: View {
                 .stroke(DS.Colors.borderSubtle.opacity(0.72), lineWidth: 0.8)
         )
         .animation(.easeInOut(duration: 0.16), value: companionManager.textCommandActivityText)
+        .animation(.easeInOut(duration: 0.16), value: companionManager.jevStep)
+        .onExitCommand { companionManager.dismissTextCommandPanel() }
         .onAppear {
             commandText = ""
             DispatchQueue.main.async {
@@ -63,13 +82,16 @@ struct TextCommandPanelView: View {
         }
     }
 
+    private var panelHeight: CGFloat {
+        guard let step = companionManager.jevStep else { return TextCommandPanelManager.baseHeight }
+        return TextCommandPanelManager.baseHeight + JevStepPanelView.height(for: step)
+    }
+
     private func submitCommand() {
         let trimmedCommand = commandText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedCommand.isEmpty else { return }
         commandText = ""
-        Task {
-            await companionManager.submitTextCommand(trimmedCommand)
-        }
+        companionManager.submitTextCommand(trimmedCommand)
     }
 }
 

@@ -417,7 +417,7 @@ struct BlueCursorView: View {
                     }
             }
 
-            // Onboarding prompt — "press control + option and say hi" streamed after video ends
+            // Onboarding prompt — "press control + option and say hi" streamed after setup
             if isCursorOnThisScreen && companionManager.showOnboardingPrompt && !companionManager.onboardingPromptText.isEmpty {
                 Text(companionManager.onboardingPromptText)
                     .font(.system(size: 11, weight: .medium))
@@ -597,7 +597,7 @@ struct BlueCursorView: View {
                 .animation(.spring(response: 0.2, dampingFraction: 0.6, blendDuration: 0), value: waveformPosition)
                 .animation(.easeIn(duration: 0.15), value: companionManager.voiceState)
 
-            // Blue spinner — shown while the AI is processing (transcription + Claude + waiting for TTS)
+            // Blue spinner — shown while the AI is processing or JEV is choosing an action
             BlueCursorSpinnerView()
                 .opacity(buddyIsVisibleOnThisScreen && companionManager.voiceState == .processing ? cursorOpacity : 0)
                 .position(cursorPosition)
@@ -1281,7 +1281,7 @@ struct BlueCursorView: View {
                 }
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
                     self.showWelcome = false
-                    // Skip the onboarding video entirely — go straight
+                    // Continue straight
                     // from the welcome bubble to the "press ctrl+opt"
                     // prompt so the user sees the cat cursor and can
                     // start talking immediately.
