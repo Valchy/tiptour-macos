@@ -1,4 +1,15 @@
+<div align="center">
+
+<img src="gemnew.png" alt="TipTour cursor actions" width="900" />
+
 # TipTour
+
+**This and That**
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](./LICENSE)
+[![Platform: macOS 14.2+](https://img.shields.io/badge/Platform-macOS%2014.2+-black)](https://www.apple.com/macos)
+
+</div>
 
 A macOS menu bar companion with two modes, powered by your own API keys.
 
@@ -7,7 +18,9 @@ A macOS menu bar companion with two modes, powered by your own API keys.
 | Gemini realtime | Ctrl+Option | Talk about your screen and ask for one desktop action per turn. Press again to stop. |
 | JEV text | Ctrl+K | Type a click-based task. JEV chooses from locally detected controls, then TipTour executes and validates each action. |
 
-Open **Settings → Models** and add your Gemini key, your JEV/TypeSafe key, or both. Keys stay in macOS Keychain. There are no shared keys, hosted key proxies, or keys loaded from other projects.
+**JEV is selected by default.** On first launch, choose JEV or Gemini, save that mode’s API key, then grant its permissions. JEV does not require microphone access. You can switch later in **Settings → Models**, which shows only the selected mode’s key field. Keys stay in macOS Keychain. There are no shared keys, hosted key proxies, or keys loaded from other projects.
+
+Shortcuts activate only the selected mode. The primary menu-bar button and welcome hint follow your selection.
 
 ## Using TipTour
 

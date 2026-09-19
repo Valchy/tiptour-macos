@@ -17,6 +17,27 @@ struct JevTests {
         return try JSONDecoder().decode([String: JevAnswer].self, from: data)
     }
 
+    @Test func defaultModeIsJevAndSavedChoiceIsRespected() {
+        #expect(TipTourMode.restored(from: nil) == .jev)
+        #expect(TipTourMode.restored(from: "obsolete-provider") == .jev)
+        #expect(TipTourMode.restored(from: "gemini") == .gemini)
+        #expect(TipTourMode.restored(from: "jev") == .jev)
+    }
+
+    @Test func microphoneIsRequiredOnlyForGemini() {
+        #expect(TipTourMode.jev.permissionsReady(desktop: true, microphone: false))
+        #expect(!TipTourMode.gemini.permissionsReady(desktop: true, microphone: false))
+        #expect(TipTourMode.gemini.permissionsReady(desktop: true, microphone: true))
+        #expect(!TipTourMode.jev.permissionsReady(desktop: false, microphone: true))
+    }
+
+    @Test func selectedModeUsesItsOwnKeyAndShortcut() {
+        #expect(TipTourMode.jev.keyName == "jevAPIKey")
+        #expect(TipTourMode.gemini.keyName == "geminiAPIKey")
+        #expect(TipTourMode.jev.shortcut == "Ctrl+K")
+        #expect(TipTourMode.gemini.shortcut == "Ctrl+Option")
+    }
+
     @Test func requestsStayUnderAPILimitAndKeepNoneOption() {
         let candidates = (0..<300).map { candidate("id-\($0)", label: "Button \($0)") }
         let request = JevGrounding.request(task: "Save", candidates: candidates, history: [], excluding: [])

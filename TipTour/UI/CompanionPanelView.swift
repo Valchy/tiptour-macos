@@ -13,6 +13,16 @@ import SwiftUI
 
 struct CompanionPanelView: View {
     @ObservedObject var companionManager: CompanionManager
+    @State private var setupStep: SetupStep = .mode
+
+    private enum SetupStep: Int {
+        case mode = 1, key, permissions
+    }
+
+    private var isReady: Bool {
+        companionManager.hasCompletedOnboarding && companionManager.hasSelectedModeKey
+            && companionManager.hasSelectedModePermissions
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -21,27 +31,16 @@ struct CompanionPanelView: View {
                 .background(DS.Colors.borderSubtle)
                 .padding(.horizontal, 16)
 
-            primaryMessageSection
-                .padding(.top, 16)
-                .padding(.horizontal, 16)
-
-            if !companionManager.hasDesktopPermissions {
-                Spacer().frame(height: 16)
-                permissionsListSection
-                    .padding(.horizontal, 16)
+            VStack(alignment: .leading, spacing: 14) {
+                if isReady {
+                    primaryMessageSection
+                    readyControlSection
+                } else {
+                    onboardingSection
+                }
             }
-
-            if !companionManager.hasCompletedOnboarding && companionManager.hasDesktopPermissions {
-                Spacer().frame(height: 16)
-                startButton
-                    .padding(.horizontal, 16)
-            }
-
-            if companionManager.hasCompletedOnboarding && companionManager.hasDesktopPermissions {
-                Spacer().frame(height: 12)
-                readyControlSection
-                    .padding(.horizontal, 16)
-            }
+            .padding(.top, 16)
+            .padding(.horizontal, 16)
 
             Spacer().frame(height: 12)
 
@@ -55,6 +54,12 @@ struct CompanionPanelView: View {
         }
         .frame(width: 300)
         .background(panelBackground)
+        .onAppear {
+            companionManager.refreshProviderKeyStatus()
+            if companionManager.hasCompletedOnboarding {
+                setupStep = companionManager.hasSelectedModeKey ? .permissions : .key
+            }
+        }
     }
 
     // MARK: - Header
@@ -133,54 +138,75 @@ struct CompanionPanelView: View {
 
     // MARK: - Primary Message
 
-    @ViewBuilder
     private var primaryMessageSection: some View {
-        if companionManager.hasCompletedOnboarding && companionManager.hasDesktopPermissions {
-            VStack(alignment: .leading, spacing: 8) {
-                Label("Gemini realtime  ·  Ctrl+Option", systemImage: "waveform")
-                Label("JEV text  ·  Ctrl+K", systemImage: "text.cursor")
-                Text("Add your keys in Settings → Models")
-                    .font(.system(size: 10))
-                    .foregroundColor(DS.Colors.textTertiary)
+        VStack(alignment: .leading, spacing: 10) {
+            Label("\(companionManager.selectedMode.title) is ready", systemImage: companionManager.selectedMode.systemImage)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(DS.Colors.textPrimary)
+            Text(companionManager.selectedMode.summary)
+                .font(.system(size: 11)).foregroundColor(DS.Colors.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Button(action: companionManager.openSelectedMode) {
+                Text("\(companionManager.selectedMode == .jev ? "Open JEV" : (companionManager.voiceState == .idle ? "Start voice" : "Stop voice"))  ·  \(companionManager.selectedMode.shortcut)")
+                    .font(.system(size: 12, weight: .semibold))
+                    .frame(maxWidth: .infinity).padding(.vertical, 10)
             }
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(DS.Colors.textSecondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        } else if companionManager.hasDesktopPermissions {
-            Text("You're all set. Hit Start to meet TipTour.")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(DS.Colors.textSecondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        } else if companionManager.hasCompletedOnboarding {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Permissions needed")
-                    .font(.system(size: 12, weight: .bold))
+            .buttonStyle(.borderedProminent)
+            .tint(DS.Colors.accent)
+            .pointerCursor()
+            .disabled(companionManager.isTextCommandRunning)
+        }
+    }
+
+    private var onboardingSection: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 5) {
+                Text("SETUP · \(setupStep.rawValue) OF 3")
+                    .font(.system(size: 9, weight: .semibold)).foregroundColor(DS.Colors.textTertiary)
+                Text(setupStep == .mode ? "Choose how to work" : setupStep == .key ? "Connect \(companionManager.selectedMode.title)" : "Allow desktop access")
+                    .font(.system(size: 16, weight: .semibold)).foregroundColor(DS.Colors.textPrimary)
+            }
+
+            switch setupStep {
+            case .mode:
+                ModeSelectionView(companionManager: companionManager)
+                Text("JEV is selected by default. You can switch later in Settings.")
+                    .font(.system(size: 11)).foregroundColor(DS.Colors.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            case .key:
+                ProviderKeyCard(mode: companionManager.selectedMode,
+                    onKeyChanged: companionManager.refreshProviderKeyStatus)
+                    .id(companionManager.selectedMode)
+            case .permissions:
+                Text(companionManager.selectedMode == .jev
+                    ? "JEV needs access to see screen controls and click them. No microphone needed."
+                    : "Gemini needs desktop access and your microphone for voice commands.")
+                    .font(.system(size: 11)).foregroundColor(DS.Colors.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                permissionsListSection
+            }
+
+            HStack {
+                if setupStep != .mode {
+                    Button("Back") {
+                        setupStep = setupStep == .permissions ? .key : .mode
+                    }
+                    .buttonStyle(.plain).pointerCursor()
                     .foregroundColor(DS.Colors.textSecondary)
-
-                Text("Some permissions were revoked. Grant desktop access below. Microphone is only for voice.")
-                    .font(.system(size: 11))
-                    .foregroundColor(DS.Colors.textTertiary)
-                    .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer()
+                Button(setupStep == .permissions ? "Start with \(companionManager.selectedMode.title)" : "Continue") {
+                    switch setupStep {
+                    case .mode: setupStep = .key
+                    case .key: setupStep = .permissions
+                    case .permissions: companionManager.triggerOnboarding()
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(DS.Colors.accent).pointerCursor()
+                .disabled((setupStep == .key && !companionManager.hasSelectedModeKey)
+                    || (setupStep == .permissions && (!companionManager.hasSelectedModeKey || !companionManager.hasSelectedModePermissions)))
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-        } else {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Hi, I'm TipTour.")
-                    .font(.system(size: 12, weight: .bold))
-                    .foregroundColor(DS.Colors.textSecondary)
-
-                Text("Ask for one thing on screen. I'll move the pointer there, click or type, then observe what changed.")
-                    .font(.system(size: 11))
-                    .foregroundColor(DS.Colors.textTertiary)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                Text("Grant the permissions below to get started.")
-                    .font(.system(size: 11))
-                    .foregroundColor(DS.Colors.textTertiary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.top, 2)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
@@ -217,6 +243,7 @@ struct CompanionPanelView: View {
                     companionManager.setAccurateGroundingEnabled(!companionManager.isAccurateGroundingEnabled)
                 }
 
+                if companionManager.selectedMode == .gemini {
                 compactControlButton(
                     title: companionManager.isScreenshotStreamingEnabled ? "Screens" : "Private",
                     subtitle: companionManager.isScreenshotStreamingEnabled ? "remote" : "local",
@@ -225,6 +252,7 @@ struct CompanionPanelView: View {
                     helpText: "Toggle remote screenshot context"
                 ) {
                     companionManager.setScreenshotStreamingEnabled(!companionManager.isScreenshotStreamingEnabled)
+                }
                 }
 
             }
@@ -292,29 +320,6 @@ struct CompanionPanelView: View {
         .help(helpText)
     }
 
-    // MARK: - Start Button
-
-    @ViewBuilder
-    private var startButton: some View {
-        if !companionManager.hasCompletedOnboarding && companionManager.hasDesktopPermissions {
-            Button(action: {
-                companionManager.triggerOnboarding()
-            }) {
-                Text("Start")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(DS.Colors.textOnAccent)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 10)
-                    .background(
-                        RoundedRectangle(cornerRadius: DS.CornerRadius.large, style: .continuous)
-                            .fill(DS.Colors.accent)
-                    )
-            }
-            .buttonStyle(.plain)
-            .pointerCursor()
-        }
-    }
-
     // MARK: - Permissions List
 
     private var permissionsListSection: some View {
@@ -325,7 +330,7 @@ struct CompanionPanelView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.bottom, 6)
 
-            microphonePermissionRow
+            if companionManager.selectedMode == .gemini { microphonePermissionRow }
             accessibilityPermissionRow
             screenRecordingPermissionRow
 
@@ -333,19 +338,7 @@ struct CompanionPanelView: View {
                 screenContentPermissionRow
             }
 
-            if !companionManager.hasDesktopPermissions {
-                HStack(alignment: .top, spacing: 6) {
-                    Image(systemName: "lock.shield")
-                        .font(.system(size: 10))
-                        .foregroundColor(DS.Colors.textTertiary)
-                        .padding(.top, 1)
-                    Text("Gemini receives audio and optional screenshots. JEV receives your typed task and detected screen labels.")
-                        .font(.system(size: 10))
-                        .foregroundColor(DS.Colors.textTertiary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .padding(.top, 8)
-            }
+
         }
     }
 
@@ -609,7 +602,7 @@ struct CompanionPanelView: View {
     }
 
     private var statusText: String {
-        if !companionManager.hasCompletedOnboarding || !companionManager.hasDesktopPermissions {
+        if !isReady {
             return "Setup"
         }
         if !companionManager.isOverlayVisible {

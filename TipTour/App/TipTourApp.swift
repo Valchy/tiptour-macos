@@ -55,7 +55,7 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
         self.harnessServer = harnessServer
         // Auto-open the panel if the user still needs to do something:
         // either they haven't onboarded yet, or permissions were revoked.
-        if !companionManager.hasCompletedOnboarding || !companionManager.allPermissionsGranted {
+        if !companionManager.hasCompletedOnboarding || !companionManager.hasSelectedModeKey || !companionManager.hasSelectedModePermissions {
             menuBarPanelManager?.showPanelOnLaunch()
         }
         registerAsLoginItemIfNeeded()
