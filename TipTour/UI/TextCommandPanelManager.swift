@@ -13,7 +13,12 @@ final class TextCommandPanelManager {
     private var mouseTrackingTimer: Timer?
     private var currentPanelOrigin: CGPoint?
 
-    private let panelSize = NSSize(width: 340, height: 64)
+    // Grows when the Jev loop has results to draw under the input. Every
+    // consumer reads this property, and positionPanel re-asserts the frame at
+    // 60Hz, so changing it here is enough to resize the live window.
+    static let baseHeight: CGFloat = 64
+    private var panelSize = NSSize(width: 340, height: TextCommandPanelManager.baseHeight)
+    private var isTrackingFrozen = false
     private let screenEdgeInset: CGFloat = 12
     private let cursorClearance: CGFloat = 44
     private let horizontalOffsetFromCursor: CGFloat = 56
@@ -50,8 +55,10 @@ final class TextCommandPanelManager {
     }
 
     private func createPanel(companionManager: CompanionManager) {
+        // No outer .frame here: the view sizes itself (TextCommandPanelView's
+        // own .frame reads panelHeight) so it can grow when the Jev loop has
+        // results to show. The window frame is driven by setResultsHeight.
         let textCommandView = TextCommandPanelView(companionManager: companionManager)
-            .frame(width: panelSize.width, height: panelSize.height)
 
         let hostingView = NSHostingView(rootView: textCommandView)
         hostingView.frame = NSRect(origin: .zero, size: panelSize)
@@ -99,8 +106,44 @@ final class TextCommandPanelManager {
         currentPanelOrigin = nil
     }
 
+    /// While the loop is driving the pointer, the panel must stop chasing it —
+    /// otherwise it flies across the screen mid-run and lands inside the very
+    /// screenshot the next detection pass reads.
+    func setTrackingFrozen(_ frozen: Bool) {
+        isTrackingFrozen = frozen
+        if frozen {
+            mouseTrackingTimer?.invalidate()
+            mouseTrackingTimer = nil
+        } else if panel?.isVisible == true {
+            startMouseTracking()
+        }
+    }
+
+    /// Resize the live panel to fit `extraHeight` of results under the input.
+    func setResultsHeight(_ extraHeight: CGFloat) {
+        let height = TextCommandPanelManager.baseHeight + max(0, extraHeight)
+        guard abs(panelSize.height - height) > 0.5 else { return }
+        panelSize = NSSize(width: panelSize.width, height: height)
+        if let panel {
+            // The hosting view is generic over the wrapped root view type, so
+            // resize it as a plain NSView rather than casting.
+            panel.contentView?.frame = NSRect(origin: .zero, size: panelSize)
+            if isTrackingFrozen {
+                let visibleFrame = panel.screen?.visibleFrame ?? panel.frame
+                let origin = CGPoint(
+                    x: min(max(panel.frame.minX, visibleFrame.minX), visibleFrame.maxX - panelSize.width),
+                    y: max(visibleFrame.minY, panel.frame.maxY - panelSize.height)
+                )
+                currentPanelOrigin = origin
+                panel.setFrame(NSRect(origin: origin, size: panelSize), display: true)
+            } else {
+                positionPanel(at: NSEvent.mouseLocation, animated: false)
+            }
+        }
+    }
+
     private func handleMouseTrackingTick() {
-        guard let panel, panel.isVisible else { return }
+        guard let panel, panel.isVisible, !isTrackingFrozen else { return }
         positionPanel(at: NSEvent.mouseLocation, animated: true)
     }
 

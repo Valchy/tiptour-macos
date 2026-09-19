@@ -11,3 +11,7 @@ build/
 releases/
 *.xcarchive/
 *.dmg
+
+# Local profiling and JEV experiments
+*.profraw
+harnesses/jev-loop/*.jsonl

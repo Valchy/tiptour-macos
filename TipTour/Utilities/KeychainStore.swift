@@ -7,8 +7,7 @@
 //  the standard macOS pattern for service-scoped secrets.
 //
 //  Scoped to TipTour's bundle identifier so the entries are isolated
-//  from anything else on the system and auto-cleaned when the app is
-//  uninstalled. No iCloud sync — these are device-local keys only.
+//  from other services. No iCloud sync — these are device-local keys only.
 //
 
 import Foundation
@@ -97,17 +96,15 @@ enum KeychainStore {
     // MARK: - TipTour-specific keys
 
     /// Gemini API key the user has pasted directly into the app.
-    /// Source builds require this local Keychain key. Distributed
-    /// builds may optionally fall back to a configured Worker proxy.
     static var geminiAPIKey: String? {
         get { get(forKey: "geminiAPIKey") }
         set { set(newValue ?? "", forKey: "geminiAPIKey") }
     }
 
-    /// Anthropic API key used by the text command planner when Hermes is off.
-    static var claudeAPIKey: String? {
-        get { get(forKey: "claudeAPIKey") }
-        set { set(newValue ?? "", forKey: "claudeAPIKey") }
+    /// TypeSafe API key for JEV text commands.
+    static var jevAPIKey: String? {
+        get { get(forKey: "jevAPIKey") }
+        set { set(newValue ?? "", forKey: "jevAPIKey") }
     }
 
 }

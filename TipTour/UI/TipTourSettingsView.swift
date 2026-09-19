@@ -3,8 +3,7 @@ import SwiftUI
 
 struct TipTourSettingsView: View {
     @ObservedObject var companionManager: CompanionManager
-    @State private var selectedSection: SettingsSection = .voice
-    @State private var hermesServerURLInput: String = TipTourDefaults.hermesAPIBaseURL
+    @State private var selectedSection: SettingsSection = .models
     private let sidebarWidth: CGFloat = 178
     private let contentMaxWidth: CGFloat = 620
 
@@ -31,9 +30,6 @@ struct TipTourSettingsView: View {
         }
         .frame(minWidth: 700, minHeight: 500)
         .background(DS.Colors.background)
-        .onAppear {
-            hermesServerURLInput = companionManager.hermesAPIBaseURL
-        }
     }
 
     private var sidebar: some View {
@@ -116,7 +112,7 @@ struct TipTourSettingsView: View {
     @ViewBuilder
     private var selectedContent: some View {
         switch selectedSection {
-        case .voice:
+        case .models:
             voiceSection
         case .connections:
             connectionsSection
@@ -131,7 +127,7 @@ struct TipTourSettingsView: View {
 
     private var voiceSection: some View {
         VStack(alignment: .leading, spacing: 14) {
-            ProviderSetupView(companionManager: companionManager)
+            ProviderSetupView()
         }
     }
 
@@ -149,97 +145,7 @@ struct TipTourSettingsView: View {
                 )
             )
 
-            settingsRow(
-                title: "Hermes Auto",
-                subtitle: companionManager.isHermesOrchestratorEnabled
-                    ? "Long Ctrl+K tasks can route to Hermes."
-                    : "Ctrl+K stays local or uses Claude one-step planning.",
-                systemImage: "link",
-                isOn: Binding(
-                    get: { companionManager.isHermesOrchestratorEnabled },
-                    set: { companionManager.setHermesOrchestratorEnabled($0) }
-                )
-            )
-
-            hermesConnectionCard
         }
-    }
-
-    private var hermesConnectionCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .center, spacing: 12) {
-                rowIcon("network")
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Hermes Connection")
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(DS.Colors.textSecondary)
-                    Text(companionManager.hermesConnectionStatus.detail)
-                        .font(.system(size: 11))
-                        .foregroundColor(DS.Colors.textTertiary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-                statusBadge(companionManager.hermesConnectionStatus.state)
-            }
-
-            TextField("http://127.0.0.1:8642", text: $hermesServerURLInput)
-                .textFieldStyle(.plain)
-                .font(.system(size: 12))
-                .foregroundColor(DS.Colors.textSecondary)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 7)
-                .background(fieldBackground)
-                .padding(.leading, 34)
-                .onSubmit {
-                    companionManager.setHermesAPIBaseURL(hermesServerURLInput)
-                    hermesServerURLInput = companionManager.hermesAPIBaseURL
-                }
-
-            HStack(spacing: 8) {
-                Spacer(minLength: 34)
-
-                Button("Detect") {
-                    companionManager.setHermesAPIBaseURL(hermesServerURLInput)
-                    Task {
-                        await companionManager.detectHermesConnection()
-                        await MainActor.run {
-                            hermesServerURLInput = companionManager.hermesAPIBaseURL
-                        }
-                    }
-                }
-                .controlSize(.small)
-                .font(.system(size: 11, weight: .medium))
-                .buttonStyle(.bordered)
-                .pointerCursor()
-
-                Button("Test") {
-                    companionManager.setHermesAPIBaseURL(hermesServerURLInput)
-                    Task {
-                        await companionManager.testHermesConnection()
-                        await MainActor.run {
-                            hermesServerURLInput = companionManager.hermesAPIBaseURL
-                        }
-                    }
-                }
-                .controlSize(.small)
-                .font(.system(size: 11, weight: .medium))
-                .buttonStyle(.borderedProminent)
-                .tint(DS.Colors.accent)
-                .pointerCursor()
-            }
-
-            if let installPath = companionManager.hermesConnectionStatus.detectedInstallPath {
-                Text(installPath)
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundColor(DS.Colors.textTertiary.opacity(0.85))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .padding(.leading, 34)
-            }
-        }
-        .padding(.vertical, 8)
     }
 
     private var privacySection: some View {
@@ -470,42 +376,6 @@ struct TipTourSettingsView: View {
             .frame(width: 22)
     }
 
-    private var fieldBackground: some View {
-        RoundedRectangle(cornerRadius: 7, style: .continuous)
-            .fill(DS.Colors.surface1.opacity(0.72))
-            .overlay(
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .stroke(DS.Colors.borderSubtle.opacity(0.65), lineWidth: 0.8)
-            )
-    }
-
-    private func statusBadge(_ state: HermesConnectionState) -> some View {
-        HStack(spacing: 5) {
-            Circle()
-                .fill(hermesStatusColor(state))
-                .frame(width: 6, height: 6)
-            Text(state.title)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(hermesStatusColor(state))
-        }
-        .lineLimit(1)
-    }
-
-    private func hermesStatusColor(_ state: HermesConnectionState) -> Color {
-        switch state {
-        case .connected:
-            return DS.Colors.success
-        case .checking:
-            return DS.Colors.textSecondary
-        case .wrongServer:
-            return DS.Colors.warning
-        case .notFound, .notRunning, .error:
-            return DS.Colors.destructiveText
-        case .idle:
-            return DS.Colors.textTertiary
-        }
-    }
-
     private func note(_ text: String) -> some View {
         Text(text)
             .font(.system(size: 11))
@@ -517,7 +387,7 @@ struct TipTourSettingsView: View {
 }
 
 private enum SettingsSection: String, CaseIterable, Identifiable {
-    case voice
+    case models
     case connections
     case privacy
     case permissions
@@ -527,8 +397,8 @@ private enum SettingsSection: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .voice: return "Voice"
-        case .connections: return "Connections"
+        case .models: return "Models"
+        case .connections: return "Desktop actions"
         case .privacy: return "Privacy"
         case .permissions: return "Permissions"
         case .advanced: return "Advanced"
@@ -537,8 +407,8 @@ private enum SettingsSection: String, CaseIterable, Identifiable {
 
     var subtitle: String {
         switch self {
-        case .voice:
-            return "Provider keys for realtime voice and one-step planning."
+        case .models:
+            return "Two modes. Your own keys."
         case .connections:
             return "Local harnesses and desktop action integrations."
         case .privacy:
@@ -552,7 +422,7 @@ private enum SettingsSection: String, CaseIterable, Identifiable {
 
     var systemImage: String {
         switch self {
-        case .voice: return "waveform.badge.mic"
+        case .models: return "waveform.badge.mic"
         case .connections: return "point.3.connected.trianglepath.dotted"
         case .privacy: return "lock.shield"
         case .permissions: return "checkmark.shield"

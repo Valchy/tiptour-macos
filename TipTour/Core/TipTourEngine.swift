@@ -66,7 +66,6 @@ struct TipTourEngineObservation: Encodable {
     let isScreenshotStreamingEnabled: Bool
     let isAccurateGroundingEnabled: Bool
     let isCuaActionDriverEnabled: Bool
-    let isHermesOrchestratorEnabled: Bool
     let detectionElementCount: Int
     let externalHarnessVisualContext: String
 }
@@ -134,7 +133,6 @@ struct TipTourEngineGroundTargetResult: Encodable {
     let actionType: String
     let candidateCount: Int
     let matchedBy: String?
-    let aiMatchLatencyMs: Int?
     let target: TipTourEngineGroundedTarget?
 
     private enum CodingKeys: String, CodingKey {
@@ -150,7 +148,6 @@ struct TipTourEngineGroundTargetResult: Encodable {
         case actionType
         case candidateCount
         case matchedBy
-        case aiMatchLatencyMs
         case target
     }
 }
@@ -328,7 +325,6 @@ final class TipTourEngine {
     private let isScreenshotStreamingEnabledProvider: () -> Bool
     private let isAccurateGroundingEnabledProvider: () -> Bool
     private let isCuaActionDriverEnabledProvider: () -> Bool
-    private let isHermesOrchestratorEnabledProvider: () -> Bool
     private let detectionElementCountProvider: () -> Int
     private let currentFocusHighlightContextProvider: () -> FocusHighlightContext?
     private let currentTargetApplicationProvider: () -> NSRunningApplication?
@@ -345,19 +341,11 @@ final class TipTourEngine {
         engine: self,
         activityReporter: activityReporter
     )
-    private lazy var imageEditService = TipTourImageEditService(
-        currentFocusHighlightContextProvider: currentFocusHighlightContextProvider,
-        currentTargetApplicationProvider: currentTargetApplicationProvider,
-        latestScreenCaptureProvider: latestScreenCaptureProvider,
-        isScreenshotStreamingEnabledProvider: isScreenshotStreamingEnabledProvider
-    )
-
     init(
         isAutopilotEnabledProvider: @escaping () -> Bool,
         isScreenshotStreamingEnabledProvider: @escaping () -> Bool,
         isAccurateGroundingEnabledProvider: @escaping () -> Bool,
         isCuaActionDriverEnabledProvider: @escaping () -> Bool,
-        isHermesOrchestratorEnabledProvider: @escaping () -> Bool,
         detectionElementCountProvider: @escaping () -> Int,
         currentFocusHighlightContextProvider: @escaping () -> FocusHighlightContext? = { nil },
         currentTargetApplicationProvider: @escaping () -> NSRunningApplication? = { nil },
@@ -371,7 +359,6 @@ final class TipTourEngine {
         self.isScreenshotStreamingEnabledProvider = isScreenshotStreamingEnabledProvider
         self.isAccurateGroundingEnabledProvider = isAccurateGroundingEnabledProvider
         self.isCuaActionDriverEnabledProvider = isCuaActionDriverEnabledProvider
-        self.isHermesOrchestratorEnabledProvider = isHermesOrchestratorEnabledProvider
         self.detectionElementCountProvider = detectionElementCountProvider
         self.currentFocusHighlightContextProvider = currentFocusHighlightContextProvider
         self.currentTargetApplicationProvider = currentTargetApplicationProvider
@@ -403,30 +390,11 @@ final class TipTourEngine {
             isScreenshotStreamingEnabled: isScreenshotStreamingEnabledProvider(),
             isAccurateGroundingEnabled: isAccurateGroundingEnabledProvider(),
             isCuaActionDriverEnabled: isCuaActionDriverEnabledProvider(),
-            isHermesOrchestratorEnabled: isHermesOrchestratorEnabledProvider(),
             detectionElementCount: detectionElementCountProvider(),
             externalHarnessVisualContext: "External harnesses should call /v1/visual-context with visual_context=auto so TipTour can decide whether compact state is enough or a screenshot is worth sending. Use /v1/screenshots only for explicit raw screenshot debugging, POST /v1/ground-target for one compact grounded visible target, and keep GET /v1/targets for debug or full-graph inspection only."
         )
     }
 
-    func imageEdit(_ request: TipTourImageEditRequest) async -> TipTourImageEditResponse {
-        let result = await imageEditService.prepareOrExecute(request)
-        recordEngineEvent(
-            name: "image_edit",
-            status: result.ok ? "ok" : "failed",
-            message: result.message,
-            metadata: [
-                TipTourActionTrace.metadataKey: result.traceID,
-                "source_kind": result.source.kind,
-                "source_path": result.source.filePath ?? "none",
-                "source_url": result.source.sourceURL ?? "none",
-                "executed": String(result.execution?.attempted ?? false),
-                "execution_ok": String(result.execution?.ok ?? false),
-                "output_path": result.execution?.outputPath ?? "none"
-            ]
-        )
-        return result
-    }
 
     func resolveHighlightSource(_ request: TipTourHighlightSourceRequest) -> TipTourHighlightSourceResponse {
         let traceID = request.normalizedTraceID ?? TipTourActionTrace.makeID(source: "source")
@@ -598,8 +566,7 @@ final class TipTourEngine {
         targetID: String?,
         targetMark: Int?,
         refresh: Bool,
-        allowScreenshotPlanning: Bool,
-        allowAIMatch: Bool
+        allowScreenshotPlanning: Bool
     ) async -> TipTourEngineGroundTargetResult {
         let traceID = TipTourActionTrace.makeID(source: "ground")
         let groundStartedAt = Date()
@@ -624,7 +591,6 @@ final class TipTourEngine {
             metadata: pointerActionMetadata(pointerActionRequest).merging(
                 [
                     "requested_refresh": String(refresh),
-                    "allow_ai_match": String(allowAIMatch),
                     "requested_app_was_frontmost": String(requestedAppWasAlreadyFrontmost)
                 ],
                 uniquingKeysWith: { existing, _ in existing }
@@ -666,7 +632,6 @@ final class TipTourEngine {
                 actionType: actionType.rawValue,
                 candidateCount: 0,
                 matchedBy: nil,
-                aiMatchLatencyMs: nil,
                 target: nil
             )
         }
@@ -685,27 +650,13 @@ final class TipTourEngine {
             excludingTargetIDs: []
         ))
 
-        let aiMatchStartDate = Date()
-        let aiMatchedTarget = matchedTarget == nil && allowAIMatch && !didRequestExactTarget
-            ? await aiMatchedTarget(
-                query: query ?? pointerActionRequest.goal,
-                intent: pointerActionRequest.goal,
-                targets: targets,
-                app: app
-            )
-            : nil
-        let aiMatchLatencyMs = aiMatchedTarget == nil ? nil : Self.elapsedMilliseconds(since: aiMatchStartDate)
-        let finalMatchedTarget = matchedTarget ?? aiMatchedTarget
-
+        let finalMatchedTarget = matchedTarget
         guard let finalMatchedTarget else {
             let reason: String
             let message: String
             if didRequestExactTarget {
                 reason = "explicit_target_not_found"
                 message = "The requested target_id or target_mark is not present in the current local perception snapshot."
-            } else if allowAIMatch {
-                reason = "ai_target_not_found"
-                message = "No local or cheap AI target match was confident enough."
             } else if allowScreenshotPlanning {
                 reason = "needs_screenshot_planner"
                 message = "No local target matched. Screenshot planning can be requested separately, but /v1/ground-target does not guess raw coordinates."
@@ -720,7 +671,6 @@ final class TipTourEngine {
                 metadata: pointerActionMetadata(pointerActionRequest).merging(
                     [
                         "reason": reason,
-                        "allow_ai_match": String(allowAIMatch),
                         "target_count": String(targets.count),
                         "elapsed_ms": String(Self.elapsedMilliseconds(since: groundStartedAt))
                     ],
@@ -740,12 +690,11 @@ final class TipTourEngine {
                 actionType: actionType.rawValue,
                 candidateCount: targets.count,
                 matchedBy: nil,
-                aiMatchLatencyMs: aiMatchLatencyMs,
                 target: nil
             )
         }
 
-        let matchedBy = didRequestExactTarget ? "explicit" : (aiMatchedTarget == nil ? "label" : "ai_match")
+        let matchedBy = didRequestExactTarget ? "explicit" : "label"
         recordEngineEvent(
             name: "ground_target",
             status: "ok",
@@ -755,7 +704,6 @@ final class TipTourEngine {
                     [
                         "matched_by": matchedBy,
                         "refreshed": String(shouldRefreshPerception),
-                        "ai_match_latency_ms": aiMatchLatencyMs.map(String.init) ?? "none",
                         "target_count": String(targets.count),
                         "elapsed_ms": String(Self.elapsedMilliseconds(since: groundStartedAt))
                     ],
@@ -777,7 +725,6 @@ final class TipTourEngine {
             actionType: actionType.rawValue,
             candidateCount: targets.count,
             matchedBy: matchedBy,
-            aiMatchLatencyMs: aiMatchLatencyMs,
             target: TipTourEngineGroundedTarget(finalMatchedTarget)
         )
     }
@@ -1168,7 +1115,7 @@ final class TipTourEngine {
             status: "started",
             metadata: pointerActionMetadata(pointerActionRequest)
         )
-        activityReporter("Hermes locating \(pointerActionRequest.targetLabel ?? pointerActionRequest.goal)")
+        activityReporter("TipTour locating \(pointerActionRequest.targetLabel ?? pointerActionRequest.goal)")
         await activateRequestedApplicationForPerceptionIfNeeded(pointerActionRequest.app)
 
         if let targetlessStep = targetlessPlanNextActionStep(for: pointerActionRequest) {
@@ -1190,7 +1137,7 @@ final class TipTourEngine {
 
         let targets = LocalPerceptionTargetCache.shared.currentTargets()
         guard !targets.isEmpty else {
-            activityReporter("Hermes found no local targets")
+            activityReporter("TipTour found no local targets")
             recordEngineEvent(
                 name: "pointer_action",
                 status: "failed",
@@ -1241,7 +1188,7 @@ final class TipTourEngine {
             let message = pointerActionRequest.allowScreenshotPlanning
                 ? "No local target matched. Screenshot planning can be added here, but this endpoint currently refuses to guess raw coordinates."
                 : "No local target matched the requested label or goal."
-            activityReporter("Hermes could not find \(pointerActionRequest.targetLabel ?? pointerActionRequest.goal)")
+            activityReporter("TipTour could not find \(pointerActionRequest.targetLabel ?? pointerActionRequest.goal)")
             recordEngineEvent(
                 name: "pointer_action",
                 status: "failed",
@@ -1285,7 +1232,7 @@ final class TipTourEngine {
         )
 
         guard pointerActionRequest.execute else {
-            activityReporter("Hermes planned \(plannedStep.hint)")
+            activityReporter("TipTour planned \(plannedStep.hint)")
             recordEngineEvent(
                 name: "pointer_action",
                 status: "ok",
@@ -1352,6 +1299,10 @@ final class TipTourEngine {
     }
 
     func submitSingleActionWorkflowPlan(_ plan: WorkflowPlan) -> TipTourEngineSubmissionResult {
+        guard !Task.isCancelled else {
+            return TipTourEngineSubmissionResult(ok: false, reason: "cancelled", message: "Stopped.",
+                acceptedSteps: 0, ignoredSteps: plan.steps.count, activeApp: plan.app)
+        }
         let traceID = plan.traceID ?? TipTourActionTrace.makeID(source: "workflow")
         let plan = plan.withTraceID(traceID)
         recordEngineEvent(
@@ -1503,7 +1454,7 @@ final class TipTourEngine {
 
         let actionLabel = firstStep.label ?? firstStep.value ?? "<unlabeled>"
         print("[Engine] accepted workflow plan \"\(singleActionPlan.goal)\" -> \(actionLabel)")
-        activityReporter("Hermes action - \(singleActionPlan.goal) -> \(actionLabel)")
+        activityReporter("TipTour action - \(singleActionPlan.goal) -> \(actionLabel)")
         recordEngineEvent(
             name: "workflow_plan",
             status: "accepted",
@@ -2398,224 +2349,6 @@ final class TipTourEngine {
         source == "ocr" ? 4 : 1
     }
 
-    private struct AIGroundingCandidate: Encodable {
-        let index: Int
-        let id: String
-        let mark: Int
-        let label: String
-        let source: String
-        let box2D: [Int]
-    }
-
-    private struct AIGroundingMatch: Decodable {
-        let index: Int?
-        let target_id: String?
-        let targetID: String?
-        let match: String?
-        let confidence: Double?
-    }
-
-    private struct GeminiGenerateContentEnvelope: Decodable {
-        struct Candidate: Decodable {
-            struct Content: Decodable {
-                struct Part: Decodable {
-                    let text: String?
-                }
-
-                let parts: [Part]?
-            }
-
-            let content: Content?
-        }
-
-        let candidates: [Candidate]?
-    }
-
-    private func aiMatchedTarget(
-        query: String,
-        intent: String,
-        targets: [LocalPerceptionTargetCache.SnapshotTarget],
-        app: String?
-    ) async -> LocalPerceptionTargetCache.SnapshotTarget? {
-        let candidateTargets = Array(
-            targetsForGoalContext(targets, goal: intent, app: app)
-                .filter { !$0.label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-                .prefix(60)
-        )
-        guard !candidateTargets.isEmpty else { return nil }
-
-        let aiCandidates = candidateTargets.enumerated().map { index, target in
-            AIGroundingCandidate(
-                index: index + 1,
-                id: target.id,
-                mark: target.mark,
-                label: target.label,
-                source: target.source,
-                box2D: target.normalizedBox2D
-            )
-        }
-
-        if let directMatch = await directGeminiTargetMatch(
-            query: query,
-            intent: intent,
-            candidates: aiCandidates
-        ),
-           let target = target(for: directMatch, in: candidateTargets) {
-            return target
-        }
-
-        if let workerMatch = await workerTargetMatch(
-            query: query,
-            candidates: candidateTargets.map(\.label)
-        ) {
-            return candidateTargets.first {
-                $0.label.caseInsensitiveCompare(workerMatch) == .orderedSame
-            }
-        }
-
-        return nil
-    }
-
-    private func directGeminiTargetMatch(
-        query: String,
-        intent: String,
-        candidates: [AIGroundingCandidate]
-    ) async -> AIGroundingMatch? {
-        guard let apiKey = KeychainStore.geminiAPIKey?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !apiKey.isEmpty else {
-            return nil
-        }
-        guard let endpoint = URL(string: "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=\(apiKey)") else {
-            return nil
-        }
-
-        let candidateJSON = (try? String(
-            data: JSONEncoder().encode(candidates),
-            encoding: .utf8
-        )) ?? "[]"
-        let prompt = """
-        Choose the single UI target that best matches the user's query and intent.
-        OCR labels may contain small typos, for example "Cude" can mean "Cube".
-        The returned target must match the Query itself.
-        Do not choose a parent menu, prerequisite, or action that would reveal the target.
-        For example, if the Query is "Cube", do not choose "Mesh" just because Mesh may contain Cube.
-        For example, if the Query is "Mesh", do not choose "Add" just because Add may contain Mesh.
-        Intent is only extra context for resolving ambiguity; it is not permission to choose a different step.
-        Do not invent targets.
-
-        Query: \(query)
-        Intent: \(intent)
-
-        Candidates JSON:
-        \(candidateJSON)
-
-        Reply with JSON only:
-        {"index": <candidate index>, "confidence": <0 to 1>}
-        If the query itself is not clearly visible in the candidates, reply:
-        {"index": null, "confidence": 0}
-        """
-
-        let payload: [String: Any] = [
-            "contents": [
-                ["parts": [["text": prompt]]]
-            ],
-            "generationConfig": [
-                "temperature": 0.0,
-                "maxOutputTokens": 128,
-                "responseMimeType": "application/json"
-            ]
-        ]
-        guard let body = try? JSONSerialization.data(withJSONObject: payload) else { return nil }
-
-        var request = URLRequest(url: endpoint)
-        request.httpMethod = "POST"
-        request.timeoutInterval = 4
-        request.setValue("application/json", forHTTPHeaderField: "content-type")
-        request.httpBody = body
-
-        do {
-            let (data, response) = try await URLSession.shared.data(for: request)
-            if let httpResponse = response as? HTTPURLResponse,
-               !(200..<300).contains(httpResponse.statusCode) {
-                return nil
-            }
-
-            let envelope = try JSONDecoder().decode(GeminiGenerateContentEnvelope.self, from: data)
-            let innerJSONText = envelope.candidates?.first?.content?.parts?.first?.text ?? "{}"
-            guard let innerData = innerJSONText.data(using: .utf8) else { return nil }
-            return try? JSONDecoder().decode(AIGroundingMatch.self, from: innerData)
-        } catch {
-            return nil
-        }
-    }
-
-    private func workerTargetMatch(query: String, candidates: [String]) async -> String? {
-        guard let workerBaseURL = ElementResolver.workerBaseURLOverride,
-              let endpoint = URL(string: "\(workerBaseURL)/match-label") else {
-            return nil
-        }
-
-        struct MatchLabelRequest: Encodable {
-            let query: String
-            let candidates: [String]
-        }
-
-        let cappedCandidates = Array(candidates.prefix(60))
-        var request = URLRequest(url: endpoint)
-        request.httpMethod = "POST"
-        request.timeoutInterval = 4
-        request.setValue("application/json", forHTTPHeaderField: "content-type")
-        request.httpBody = try? JSONEncoder().encode(MatchLabelRequest(
-            query: query,
-            candidates: cappedCandidates
-        ))
-
-        do {
-            let (data, response) = try await URLSession.shared.data(for: request)
-            if let httpResponse = response as? HTTPURLResponse,
-               !(200..<300).contains(httpResponse.statusCode) {
-                return nil
-            }
-
-            let envelope = try JSONDecoder().decode(GeminiGenerateContentEnvelope.self, from: data)
-            let innerJSONText = envelope.candidates?.first?.content?.parts?.first?.text ?? "{}"
-            guard let innerData = innerJSONText.data(using: .utf8) else { return nil }
-            return (try? JSONDecoder().decode(AIGroundingMatch.self, from: innerData))?.match
-        } catch {
-            return nil
-        }
-    }
-
-    private func target(
-        for match: AIGroundingMatch,
-        in targets: [LocalPerceptionTargetCache.SnapshotTarget]
-    ) -> LocalPerceptionTargetCache.SnapshotTarget? {
-        if let confidence = match.confidence, confidence < 0.45 {
-            return nil
-        }
-
-        if let index = match.index,
-           index > 0,
-           index <= targets.count {
-            return targets[index - 1]
-        }
-
-        let matchedTargetID = (match.target_id ?? match.targetID)?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        if let matchedTargetID, !matchedTargetID.isEmpty {
-            return targets.first { $0.id == matchedTargetID }
-        }
-
-        let matchedLabel = match.match?.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let matchedLabel, !matchedLabel.isEmpty {
-            return targets.first {
-                $0.label.caseInsensitiveCompare(matchedLabel) == .orderedSame
-            }
-        }
-
-        return nil
-    }
-
     private struct GroundedActionExecutionResult {
         let ok: Bool
         let reason: String?
@@ -2786,6 +2519,11 @@ final class TipTourEngine {
         let deadline = startedAt.addingTimeInterval(workflowSettlementTimeoutSeconds)
 
         while Date() < deadline {
+            if Task.isCancelled {
+                WorkflowRunner.shared.stop()
+                return TipTourEngineWorkflowOutcome(status: "cancelled", reason: "cancelled",
+                    message: "Stopped.", waitMs: Self.elapsedMilliseconds(since: startedAt))
+            }
             if let pausedReason = WorkflowRunner.shared.pausedReason {
                 return TipTourEngineWorkflowOutcome(
                     status: "paused",
@@ -3142,7 +2880,7 @@ final class TipTourLongTaskCoordinator {
             return TipTourLongTaskStartResponse(
                 ok: false,
                 reason: "workflow_steps_required",
-                message: "TipTour local tasks need explicit workflow steps. Planning can live in Hermes or Claude now and in stored workflows later.",
+                message: "TipTour local tasks need explicit workflow steps. Provide concrete actions through the local harness.",
                 task: nil
             )
         }

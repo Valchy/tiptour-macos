@@ -581,16 +581,6 @@ enum TipTourHighlightSourceResolver {
         }
 
         switch contentCategory {
-        case "image":
-            tools.append(
-                TipTourHighlightToolCapability(
-                    id: "image_edit",
-                    title: "Edit image",
-                    endpoint: "/v1/image-edit",
-                    mode: "provider",
-                    reason: "Image files can be edited with the configured image model."
-                )
-            )
         case "text", "code", "markdown", "json":
             tools.append(
                 TipTourHighlightToolCapability(

@@ -1,115 +1,39 @@
-<div align="center">
-
-<img src="gemnew.png" alt="TipTour cursor actions" width="900" />
-
 # TipTour
 
-**This and That**
+A macOS menu bar companion with two modes, powered by your own API keys.
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](./LICENSE)
-[![Platform: macOS 14+](https://img.shields.io/badge/Platform-macOS%2014+-black)](https://www.apple.com/macos)
+| Mode | Shortcut | What it does |
+| --- | --- | --- |
+| Gemini realtime | Ctrl+Option | Talk about your screen and ask for one desktop action per turn. Press again to stop. |
+| JEV text | Ctrl+K | Type a click-based task. JEV chooses from locally detected controls, then TipTour executes and validates each action. |
 
-</div>
+Open **Settings → Models** and add your Gemini key, your JEV/TypeSafe key, or both. Keys stay in macOS Keychain. There are no shared keys, hosted key proxies, or keys loaded from other projects.
 
-TipTour is a macOS menu bar companion that understands your screen, listens to your voice, and controls your computer for you.
+## Using TipTour
 
-Hold the hotkey, say what you want, and TipTour can point, click, type, open apps, edit selected text, or act on a freeform highlighted area.
+- Gemini supports clicking, typing, shortcuts, app/URL opening, scrolling, and highlighted text edits. It also supports creating an Apple Notes note from supplied content.
+- JEV supports single, double, and right clicks. It reads screen labels and locations from local detection; it cannot see images or generate replacement text. Use Gemini for writing or keyboard actions.
+- Press **Escape** in the text panel or click **Stop** to cancel JEV. The loop stops on an uncertain/absent target, an execution pause/failure, or its 12-action limit.
+- Hold **Ctrl+Shift** and paint over an area to give Gemini focus context.
+- Hold **Ctrl+Option+Command** for the Speak / Type / Highlight shortcut chooser.
+- **Auto-click** lets TipTour act. **Point only** lets Gemini indicate where you should click. JEV requires auto-click.
 
-## What You Can Say
+Settings also contains desktop action access, screenshot privacy, permissions, and optional debug visuals. There is no recording, video creation, or image-generation pipeline.
 
-- "Open Apple Notes and write a short essay"
+## Privacy and permissions
 
-Then you can do a freeform highlight by holding Control+Shift and moving your mouse and say
-- "Change this word."
+Gemini receives microphone audio and, when enabled, screenshots. JEV receives your typed task, locally detected labels/locations, and recent action history; screenshots stay local. Both modes use the shared local grounding and action engine.
 
-- "Move this over there."
-- "Click the Blank document."
-- "Make this line sound softer."
-- "Guide me through exporting this."
+Accessibility permission is needed to inspect and control apps. macOS Screen Recording / Screen Content permission enables screenshots and local screen detection; it does **not** mean TipTour records videos. Microphone access is only needed for Gemini voice.
 
-TipTour sees the app/window you are working in, understands the highlighted or hovered area, and keeps actions inside that context.
+## Build
 
-## How It Works
+Requires macOS 14.2+ and a current Xcode with Swift support. Open `tiptour-macos.xcodeproj`, select the TipTour scheme, set your signing team, and build/run in Xcode. Package dependencies resolve through Xcode.
 
-TipTour combines:
+Use Xcode for app builds: terminal `xcodebuild` is prohibited by this repository's workflow to preserve the installed app's macOS permissions. Run `scripts/test-jev.sh` for isolated JEV decision tests without installing or launching the app.
 
-- **Gemini Live** for realtime voice, screen understanding, transcription, and tool calling.
-- **CUA Driver Core** for reliable computer control: clicks, typing, hotkeys, app launch, URLs, scrolling, and browser coordinates.
-- **macOS Accessibility** for native app structure and exact text/element targeting.
-- **Focus Highlight** for "this part" commands: hold the highlight hotkey, paint over an area, then ask TipTour to edit or act on it.
+## Code
 
-The app runs from the macOS menu bar. No dock icon, no main window.
+See [source layout](docs/source-layout.md) and [local harness contract](docs/tiptour-agent-contract.md). `main` is the integration branch for both modes; feature branches are temporary PR work.
 
-## Controls
-
-- **Ctrl + Option**: toggle voice mode.
-- **Ctrl + Shift + drag**: paint a freeform focus highlight.
-- **Menu bar icon**: open settings, permissions, and mode toggles.
-
-## Modes
-
-- **Autopilot**: TipTour performs actions for you. On by default.
-- **Tour Guide**: TipTour teaches step by step. Off by default.
-- **Neko Mode**: optional playful cursor mode. Off by default.
-
-## Privacy
-
-TipTour needs macOS permissions to work:
-
-| Permission | Used For |
-|---|---|
-| Microphone | Voice input |
-| Screen Recording | Visual context for Gemini |
-| Accessibility | Reading UI structure and controlling apps |
-| Screen Content | ScreenCaptureKit capture |
-
-Source builds require your own Gemini API key. Paste it into the visible “Gemini API key” field in the menu bar panel; TipTour stores it in macOS Keychain.
-
-## Build From Source
-
-Requirements:
-
-- macOS 14+
-- Xcode 16+
-- Node 20+ only if working on the Cloudflare Worker
-
-Open the project:
-
-```bash
-open tiptour-macos.xcodeproj
-```
-
-Then in Xcode:
-
-1. Select the `TipTour` scheme.
-2. Set your signing team.
-3. Press `Cmd+R`.
-4. Paste your Gemini API key into the panel.
-5. Grant the requested macOS permissions.
-
-Do not build with terminal `xcodebuild` if you are actively testing permissions, because it can invalidate local TCC permission state.
-
-## Worker
-
-The Worker is optional for distribution builds. Source builds do not use the maintainer's Worker URL. To ship your own Worker-backed build, deploy the Worker and set `TipTourWorkerBaseURL` in the app bundle/build settings.
-
-```bash
-cd worker
-npm install
-npx wrangler secret put GEMINI_API_KEY
-npx wrangler deploy
-```
-
-## Project Notes
-
-For the deeper technical map, coding conventions, and agent instructions, see [AGENTS.md](AGENTS.md).
-
-## Credits
-
-- [CUA](https://github.com/trycua/cua) for computer-use primitives.
-- [Gemini Live](https://ai.google.dev/gemini-api/docs/live-api) for realtime voice, vision, and tool calling.
-- [oneko](https://github.com/crgimenes/neko) for optional pixel cat sprites.
-
-## License
-
-[MIT](LICENSE)
+MIT licensed. See [LICENSE](LICENSE).

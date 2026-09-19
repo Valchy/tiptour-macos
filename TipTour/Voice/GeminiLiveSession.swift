@@ -64,8 +64,7 @@ final class GeminiLiveSession: ObservableObject {
     var onError: ((Error) -> Void)?
 
     /// Legacy handler for older Gemini sessions that still call the removed
-    /// point tool. New sessions declare `submit_workflow_plan` plus
-    /// `edit_highlighted_image`.
+    /// point tool. New sessions use `submit_workflow_plan`.
     var onPointAtElement: ((_ id: String, _ label: String, _ box2DNormalized: [Int]?, _ screenshotJPEG: Data?) async -> [String: Any])?
 
     /// Fired when Gemini calls `submit_workflow_plan(goal, app, steps)`.
@@ -73,11 +72,6 @@ final class GeminiLiveSession: ObservableObject {
     /// the handler just hands the steps off to WorkflowRunner and returns
     /// an acknowledgement — no separate planner round-trip needed.
     var onSubmitWorkflowPlan: ((_ id: String, _ goal: String, _ app: String, _ steps: [[String: Any]]) async -> [String: Any])?
-
-    /// Fired when Gemini calls `edit_highlighted_image(prompt, ...)`.
-    /// TipTour resolves the current focus highlight to an image source and
-    /// optionally calls the configured image model.
-    var onEditHighlightedImage: ((_ id: String, _ prompt: String, _ sourceFilePath: String?, _ execute: Bool, _ provider: String?, _ model: String?, _ openResult: Bool?) async -> [String: Any])?
 
     /// Fired when Gemini calls `create_note(title, body)`.
     /// This deterministic demo path opens Notes, creates a note, and types
@@ -104,13 +98,6 @@ final class GeminiLiveSession: ObservableObject {
     private var audioEngine = AVAudioEngine()
     private let pcm16Converter = BuddyPCM16AudioConverter(targetSampleRate: GeminiLiveClient.inputSampleRate)
 
-    /// Optional Worker endpoint for distributed builds. Source builds
-    /// leave this nil and require a local Keychain Gemini key.
-    private let apiKeyURL: URL?
-    private var cachedWorkerAPIKey: String?
-
-    /// The system prompt given to Gemini. Keeps POINT-tag behavior identical
-    /// to the existing Claude flow so the cursor pointing keeps working.
     private let systemPrompt: String
 
     /// Whether the audio input tap has been installed on the engine.
@@ -165,8 +152,7 @@ final class GeminiLiveSession: ObservableObject {
 
     // MARK: - Init
 
-    init(apiKeyURL: String?, systemPrompt: String) {
-        self.apiKeyURL = apiKeyURL.flatMap(URL.init(string:))
+    init(systemPrompt: String) {
         self.systemPrompt = systemPrompt
 
         geminiClient.onEvent = { [weak self] event in
@@ -187,22 +173,9 @@ final class GeminiLiveSession: ObservableObject {
             return
         }
 
-        // Both the key fetch and the WebSocket handshake are flaky network
-        // ops that fail individually about ~1% of the time (DNS hiccup,
-        // brief Cloudflare 5xx, TLS renegotiation). Wrap each in
-        // exponential backoff so a single transient blip doesn't kill
-        // the user's push-to-talk session before it even starts.
-        let apiKey = try await RetryWithExponentialBackoff.run(
-            maxAttempts: 3,
-            initialDelay: 0.5,
-            operationName: "GeminiLive.fetchAPIKey"
-        ) { [weak self] in
-            guard let self else {
-                throw NSError(domain: "GeminiLiveSession", code: -12,
-                              userInfo: [NSLocalizedDescriptionKey: "Session deallocated during key fetch"])
-            }
-            return try await self.fetchAPIKey()
-        }
+        var startupCompleted = false
+        defer { if !startupCompleted { stop() } }
+        let apiKey = try await fetchAPIKey()
 
         try await RetryWithExponentialBackoff.run(
             maxAttempts: 3,
@@ -218,6 +191,8 @@ final class GeminiLiveSession: ObservableObject {
                 systemPrompt: self.systemPrompt
             )
         }
+
+        try Task.checkCancellation()
 
         if !isScreenshotStreamingEnabled {
             geminiClient.sendText("""
@@ -239,6 +214,7 @@ final class GeminiLiveSession: ObservableObject {
         audioPlayer.startPlaying()
 
         isActive = true
+        startupCompleted = true
         inputTranscript = ""
         hasReceivedUserSpeechThisSession = false
         didSendStateSyncScreenshotForCurrentUserTurn = false
@@ -260,7 +236,6 @@ final class GeminiLiveSession: ObservableObject {
 
     /// End the session — stops mic capture, closes WebSocket, stops playback.
     func stop() {
-        guard isActive else { return }
 
         stopPeriodicScreenshotUpdates()
         hasReceivedUserSpeechThisSession = false
@@ -569,50 +544,13 @@ final class GeminiLiveSession: ObservableObject {
 
     // MARK: - API Key Fetch
 
-    /// Resolve the Gemini API key. Source builds use only the user's
-    /// Keychain key. Distributed builds may provide TipTourWorkerBaseURL
-    /// in Info.plist to enable a Worker fallback.
     private func fetchAPIKey() async throws -> String {
-        if let userKey = KeychainStore.geminiAPIKey?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !userKey.isEmpty {
-            print("[GeminiLiveSession] Using Gemini API key from Keychain (bring-your-own-key mode)")
-            return userKey
+        guard let key = KeychainStore.geminiAPIKey, !key.isEmpty else {
+            throw NSError(domain: "GeminiLiveSession", code: -9, userInfo: [
+                NSLocalizedDescriptionKey: "Add your Gemini API key in Settings → Models to use realtime voice."
+            ])
         }
-
-        guard let apiKeyURL else {
-            throw NSError(
-                domain: "GeminiLiveSession",
-                code: -9,
-                userInfo: [
-                    NSLocalizedDescriptionKey: "No Gemini API key saved. Paste your own Gemini API key in the TipTour panel to use this source build."
-                ]
-            )
-        }
-
-        if let cachedWorkerAPIKey {
-            return cachedWorkerAPIKey
-        }
-
-        var request = URLRequest(url: apiKeyURL)
-        request.httpMethod = "GET"
-        request.timeoutInterval = 10
-
-        let (data, response) = try await URLSession.shared.data(for: request)
-
-        guard let httpResponse = response as? HTTPURLResponse,
-              (200...299).contains(httpResponse.statusCode) else {
-            throw NSError(domain: "GeminiLiveSession", code: -10,
-                          userInfo: [NSLocalizedDescriptionKey: "Failed to fetch Gemini API key from Worker (\(apiKeyURL.absoluteString)). Paste a key in the TipTour panel or check the Worker configuration."])
-        }
-
-        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let apiKey = json["apiKey"] as? String else {
-            throw NSError(domain: "GeminiLiveSession", code: -11,
-                          userInfo: [NSLocalizedDescriptionKey: "Invalid API key response"])
-        }
-
-        cachedWorkerAPIKey = apiKey
-        return apiKey
+        return key
     }
 
     // MARK: - Mic Capture
@@ -910,24 +848,6 @@ final class GeminiLiveSession: ObservableObject {
                     response = await handler(id, goal, app, steps)
                 } else {
                     print("[GeminiLiveSession] submit_workflow_plan called with no handler or empty steps")
-                }
-
-            case "edit_highlighted_image":
-                let prompt = (args["prompt"] as? String)
-                    ?? (args["instruction"] as? String)
-                    ?? (args["goal"] as? String)
-                    ?? ""
-                let sourceFilePath = (args["source_file_path"] as? String)
-                    ?? (args["sourceFilePath"] as? String)
-                let execute = (args["execute"] as? Bool) ?? true
-                let provider = args["provider"] as? String
-                let model = args["model"] as? String
-                let openResult = (args["open_result"] as? Bool)
-                    ?? (args["openResult"] as? Bool)
-                if !prompt.isEmpty, let handler = onEditHighlightedImage {
-                    response = await handler(id, prompt, sourceFilePath, execute, provider, model, openResult)
-                } else {
-                    print("[GeminiLiveSession] edit_highlighted_image called with no handler or empty prompt")
                 }
 
             case "create_note":

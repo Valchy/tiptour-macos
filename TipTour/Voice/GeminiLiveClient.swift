@@ -168,11 +168,11 @@ final class GeminiLiveClient: @unchecked Sendable {
         // automatic voice activity detection, AND the tools Gemini can call.
         //
         // Gemini Live has vision + reasoning, so it chooses either one
-        // local computer action or one highlighted-image edit directly
+        // local computer action directly
         // without a second planner model or point-at-element path.
         let submitWorkflowPlanTool: [String: Any] = [
             "name": "submit_workflow_plan",
-            "description": "Submit exactly one CUA action step for anything the user wants done on the computer: open an app, open a URL, click UI, press a shortcut, type text, edit highlighted/selected text, or scroll. Do not use this for image-generation/image-edit requests; use edit_highlighted_image. Never submit a chained sequence; wait for the next screen/user turn before the next action.",
+            "description": "Submit exactly one CUA action step for anything the user wants done on the computer: open an app, open a URL, click UI, press a shortcut, type text, edit highlighted/selected text, or scroll. Never submit a chained sequence; wait for the next screen/user turn before the next action.",
             "parameters": [
                 "type": "object",
                 "properties": [
@@ -271,42 +271,6 @@ final class GeminiLiveClient: @unchecked Sendable {
             ]
         ]
 
-        let editHighlightedImageTool: [String: Any] = [
-            "name": "edit_highlighted_image",
-            "description": "Edit the image file or screenshot region the user has just highlighted with TipTour. Use this only for image-edit requests like remove, recolor, brighten, replace, retouch, or modify this highlighted part of the image. TipTour saves a copy and never overwrites the original.",
-            "parameters": [
-                "type": "object",
-                "properties": [
-                    "prompt": [
-                        "type": "string",
-                        "description": "The user's image edit request, rewritten as a direct image-edit instruction. Example: 'remove the object in the highlighted area' or 'make the highlighted area brighter'."
-                    ],
-                    "source_file_path": [
-                        "type": "string",
-                        "description": "Optional absolute path to the image file if it is already known. Usually omit this and let TipTour resolve the current highlight."
-                    ],
-                    "execute": [
-                        "type": "boolean",
-                        "description": "Whether TipTour should call the configured image model now. Use true for direct user commands like 'edit this image' or 'make this brighter'. Use false only when the user asks to prepare/check."
-                    ],
-                    "provider": [
-                        "type": "string",
-                        "description": "Optional provider override. Usually omit.",
-                        "enum": ["gemini", "nano_banana", "nanobanana"]
-                    ],
-                    "model": [
-                        "type": "string",
-                        "description": "Optional model override. Usually omit so TipTour uses its default image edit model."
-                    ],
-                    "open_result": [
-                        "type": "boolean",
-                        "description": "Whether to open the saved copy after editing. Usually true for demos."
-                    ]
-                ],
-                "required": ["prompt"]
-            ]
-        ]
-
         let createNoteTool: [String: Any] = [
             "name": "create_note",
             "description": "Create and fill a new Apple Notes note from one spoken request. Use this when the user asks to make, create, write, or take a note in Notes and provides the note text. Do not split this into open Notes, Cmd+N, and type actions.",
@@ -365,7 +329,7 @@ final class GeminiLiveClient: @unchecked Sendable {
                     ]
                 ],
                 "tools": [
-                    ["functionDeclarations": [submitWorkflowPlanTool, editHighlightedImageTool, createNoteTool]]
+                    ["functionDeclarations": [submitWorkflowPlanTool, createNoteTool]]
                 ]
             ]
         ]

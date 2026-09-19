@@ -240,25 +240,6 @@ final class ElementResolver: @unchecked Sendable {
                 return axResolution
             }
 
-            // Multilingual safety net: AX missed because the user's
-            // spoken language doesn't match the UI's display language
-            // (Gemini sometimes passes "Guardar" to a UI that has
-            // "Save", or vice versa). Pull the current AX label list
-            // and ask the worker which one matches semantically. Cheap
-            // (gemini-flash-lite, ~200ms) and only runs when the
-            // strict matcher already failed.
-            if let translatedLabel = await translateLabelViaSemanticMatch(
-                originalLabel: label,
-                targetAppHint: targetAppHint
-            ),
-               translatedLabel.caseInsensitiveCompare(label) != .orderedSame,
-               let axResolution = await tryAccessibilityTree(
-                   label: translatedLabel,
-                   targetAppHint: targetAppHint
-               ) {
-                print("[ElementResolver] ✓ multilingual fallback resolved \"\(label)\" → \"\(translatedLabel)\"")
-                return axResolution
-            }
         }
 
         // 2. Browser DOM/CDP coordinates. Chrome and other Chromium
@@ -412,104 +393,6 @@ final class ElementResolver: @unchecked Sendable {
         return normalizedTargetAppHint.contains("blender")
             || normalizedTargetAppHint.contains("org.blenderfoundation.blender")
     }
-
-    // MARK: - Multilingual Fallback
-
-    /// When AX exact-match fails because the user's spoken language
-    /// doesn't match the UI's display language (e.g. user said "guardar"
-    /// but the UI shows "Save"), pull the current AX label list and ask
-    /// the worker which candidate matches the user's intent semantically.
-    ///
-    /// Returns nil when the worker has nothing confident to suggest, the
-    /// network call fails, or no AX labels could be collected.
-    private func translateLabelViaSemanticMatch(
-        originalLabel: String,
-        targetAppHint: String?
-    ) async -> String? {
-        // Pull the same set-of-marks list we'd send to Gemini. Off-main
-        // because the AX walk can take a few hundred ms on complex apps.
-        let marks: [AccessibilityTreeResolver.ElementMark]? = await Task.detached(priority: .userInitiated) {
-            self.axResolver.setOfMarksForTargetApp(hint: targetAppHint)
-        }.value
-
-        guard let marks = marks, !marks.isEmpty else {
-            return nil
-        }
-
-        // Dedup labels (multiple AX nodes can have the same title) and
-        // drop empty/whitespace-only ones.
-        let candidateLabels: [String] = {
-            var seen = Set<String>()
-            var ordered: [String] = []
-            for mark in marks {
-                let trimmed = mark.label.trimmingCharacters(in: .whitespacesAndNewlines)
-                if trimmed.isEmpty { continue }
-                if seen.insert(trimmed).inserted {
-                    ordered.append(trimmed)
-                }
-            }
-            return ordered
-        }()
-
-        guard !candidateLabels.isEmpty else { return nil }
-
-        guard let workerBaseURL = Self.workerBaseURLOverride
-                ?? Self.defaultWorkerBaseURL else {
-            return nil
-        }
-        guard let endpoint = URL(string: "\(workerBaseURL)/match-label") else {
-            return nil
-        }
-
-        struct MatchLabelRequest: Encodable {
-            let query: String
-            let candidates: [String]
-        }
-        struct GeminiEnvelope: Decodable {
-            struct Candidate: Decodable {
-                struct Content: Decodable {
-                    struct Part: Decodable { let text: String? }
-                    let parts: [Part]?
-                }
-                let content: Content?
-            }
-            let candidates: [Candidate]?
-        }
-        struct InnerMatch: Decodable { let match: String? }
-
-        var request = URLRequest(url: endpoint)
-        request.httpMethod = "POST"
-        request.timeoutInterval = 5
-        request.setValue("application/json", forHTTPHeaderField: "content-type")
-        do {
-            request.httpBody = try JSONEncoder().encode(MatchLabelRequest(
-                query: originalLabel,
-                candidates: candidateLabels
-            ))
-        } catch {
-            return nil
-        }
-
-        do {
-            let (data, response) = try await URLSession.shared.data(for: request)
-            if let http = response as? HTTPURLResponse, http.statusCode != 200 {
-                return nil
-            }
-            let envelope = try JSONDecoder().decode(GeminiEnvelope.self, from: data)
-            let innerJSONText = envelope.candidates?.first?.content?.parts?.first?.text ?? "{}"
-            guard let innerData = innerJSONText.data(using: .utf8) else { return nil }
-            let inner = (try? JSONDecoder().decode(InnerMatch.self, from: innerData)) ?? InnerMatch(match: nil)
-            return inner.match
-        } catch {
-            return nil
-        }
-    }
-
-    /// Optional Worker base URL — set by CompanionManager from bundle
-    /// config for distributed builds. Source builds leave this nil so
-    /// they never hit the maintainer's Cloudflare Worker.
-    nonisolated(unsafe) static var workerBaseURLOverride: String?
-    private static let defaultWorkerBaseURL: String? = nil
 
     // MARK: - Coordinate Conversion
 
