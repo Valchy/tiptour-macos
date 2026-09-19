@@ -4,6 +4,16 @@ import SwiftUI
 private final class TextCommandKeyablePanel: NSPanel {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { true }
+    var onEscape: (() -> Void)?
+
+    override func sendEvent(_ event: NSEvent) {
+        // Escape must still work when the input is disabled or has lost focus.
+        if event.type == .keyDown, event.keyCode == 53 {
+            onEscape?()
+            return
+        }
+        super.sendEvent(event)
+    }
 }
 
 @MainActor
@@ -73,6 +83,9 @@ final class TextCommandPanelManager {
             defer: false
         )
 
+        commandPanel.onEscape = { [weak companionManager] in
+            companionManager?.dismissTextCommandPanel()
+        }
         commandPanel.isFloatingPanel = true
         commandPanel.level = .floating
         commandPanel.isOpaque = false
