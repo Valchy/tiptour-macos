@@ -45,8 +45,8 @@ nonisolated struct JevDecision {
     let metrics: JevCallMetrics
 
     var stopReason: String? {
-        if choseNone || absent >= JevGrounding.absentThreshold { return "target_absent" }
-        guard let best, best.probability >= JevGrounding.probabilityFloor else { return "uncertain_target" }
+        if choseNone { return "target_absent" }
+        guard best != nil else { return "no_candidates" }
         return nil
     }
 
@@ -65,12 +65,7 @@ nonisolated enum JevGrounding {
     /// Leave headroom under the hard 255 cap.
     static let maxCandidates = 200
 
-    /// Act only when the winner is this far clear. Threshold on the raw top
-    /// probability, never on `confidence`, which is chance-corrected and so
-    /// moves as the candidate count changes between steps.
-    static let probabilityFloor = 0.34
     static let doneThreshold = 0.70
-    static let absentThreshold = 0.50
 
     /// Identical descriptions must be collapsed before asking: on a true tie
     /// Jev does not report 50/50, it breaks toward the first key and still

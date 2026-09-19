@@ -119,7 +119,7 @@ final class JevPointerLoop {
                 if let reason = decision.stopReason {
                     let message = reason == "target_absent"
                         ? "JEV couldn't find the requested control among \(candidates.count) targets. Name a visible button or menu."
-                        : "JEV isn't sure which control to click. Name a visible button or menu."
+                        : "No target is available to click."
                     return finish(reason: reason, message: message)
                 }
                 guard step <= maxSteps else {

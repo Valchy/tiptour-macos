@@ -26,7 +26,7 @@ Shortcuts activate only the selected mode. The primary menu-bar button and welco
 
 - Gemini supports clicking, typing, shortcuts, app/URL opening, scrolling, and highlighted text edits. It also supports creating an Apple Notes note from supplied content.
 - JEV supports single, double, and right clicks. It reads screen labels and locations from local detection; it cannot see images or generate replacement text. Use Gemini for writing or keyboard actions.
-- Press **Escape** in the text panel or click **Stop** to cancel JEV. The loop stops on an uncertain/absent target, an execution pause/failure, or its 12-action limit.
+- Press **Escape** in the text panel or click **Stop** to cancel JEV. JEV acts on its top-ranked target without a confidence cutoff. The loop stops when JEV chooses none or reports completion, on an execution pause/failure, or at its 12-action limit.
 - Hold **Ctrl+Shift** and paint over an area to give Gemini focus context.
 - Hold **Ctrl+Option+Command** for the Speak / Type / Highlight shortcut chooser.
 - **Auto-click** lets TipTour act. **Point only** lets Gemini indicate where you should click. JEV requires auto-click.
