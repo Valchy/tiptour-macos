@@ -64,11 +64,13 @@ struct JevTests {
         #expect(result.stopReason == "target_absent")
     }
 
-    @Test func absentAndLowProbabilityStop() throws {
+    @Test func topTargetIsAllowedRegardlessOfAbsentScoreOrProbability() throws {
         let absent = try JevGrounding.decision(from: answers(absent: 0.9), pool: [candidate()], metrics: metrics)
         let weak = try JevGrounding.decision(from: answers(probability: 0.2), pool: [candidate()], metrics: metrics)
-        #expect(absent.stopReason == "target_absent")
-        #expect(weak.stopReason == "uncertain_target")
+        #expect(absent.stopReason == nil)
+        #expect(absent.best?.candidate.id == "save")
+        #expect(weak.stopReason == nil)
+        #expect(weak.best?.candidate.id == "save")
     }
 
     @Test func inventedTargetOrActionAndIncompleteResponsesAreRejected() throws {

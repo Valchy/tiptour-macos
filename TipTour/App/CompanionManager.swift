@@ -136,6 +136,8 @@ final class CompanionManager: ObservableObject {
 
     private var voiceStartTask: Task<Void, Never>?
     private var textCommandTask: Task<Void, Never>?
+    private var textCommandRunID: UUID?
+    @Published private(set) var textCommandFocusRequest = UUID()
     @Published private(set) var isTextCommandRunning = false
 
     private var shouldRunNativeDetection: Bool {
@@ -1212,9 +1214,11 @@ final class CompanionManager: ObservableObject {
     private func refreshNativeDetectionOverlay(reason: String) async {
         do {
             let capturedScreen = try await CompanionScreenCaptureUtility.captureCursorScreenAsCGImage()
+            try Task.checkCancellation()
             let capturedImage = capturedScreen.image
             let capturedDisplayFrame = capturedScreen.displayFrame
             let detectedElements = await NativeElementDetector.shared.detectElements(in: capturedImage)
+            try Task.checkCancellation()
             var overlayElements = detectedElements.map { detectedElement in
                 [
                     "bbox": [
@@ -1562,6 +1566,7 @@ final class CompanionManager: ObservableObject {
         NotificationCenter.default.post(name: .tipTourDismissPanel, object: nil)
         textCommandActivityText = nil
         textCommandPanelManager.show()
+        textCommandFocusRequest = UUID()
 
         Task { [weak self] in
             guard let self else { return }
@@ -2523,42 +2528,50 @@ final class CompanionManager: ObservableObject {
             textCommandActivityText = "Add your JEV key in Settings → Models"
             return
         }
+        let runID = UUID()
+        textCommandRunID = runID
         isTextCommandRunning = true
         jevStep = nil
         textCommandPanelManager.setResultsHeight(0)
         stopVoiceSession()
         textCommandTask = Task { [weak self] in
-            guard let self else { return }
-            defer {
-                self.isTextCommandRunning = false
-                self.textCommandTask = nil
-            }
-            await self.runTextCommand(prompt)
+            guard let self, self.textCommandRunID == runID, !Task.isCancelled else { return }
+            await self.runTextCommand(prompt, runID: runID)
+            guard self.textCommandRunID == runID else { return }
+            self.finishTextCommand()
         }
     }
 
     func cancelTextCommand() {
         guard isTextCommandRunning else { return }
+        textCommandRunID = nil
         textCommandTask?.cancel()
         WorkflowRunner.shared.stop()
+        finishTextCommand()
+        jevStep = nil
+        textCommandPanelManager.setResultsHeight(0)
         textCommandActivityText = "Stopped"
     }
 
-    private func runTextCommand(_ prompt: String) async {
+    private func finishTextCommand() {
+        textCommandRunID = nil
+        textCommandTask = nil
+        isTextCommandRunning = false
+        voiceState = .idle
+        textCommandPanelManager.setTrackingFrozen(false)
+        if !isAccurateGroundingEnabled && !isDetectionOverlayEnabled { stopNativeDetection() }
+        textCommandFocusRequest = UUID()
+    }
+
+    private func runTextCommand(_ prompt: String, runID: UUID) async {
         let trimmedPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         PipelineLogStore.shared.record(category: "text_command", name: "submitted",
             status: "received", message: trimmedPrompt)
         voiceState = .processing
         textCommandActivityText = "JEV is looking at the screen"
         textCommandPanelManager.setTrackingFrozen(true)
-        defer {
-            voiceState = .idle
-            textCommandPanelManager.setTrackingFrozen(false)
-            if !isAccurateGroundingEnabled && !isDetectionOverlayEnabled { stopNativeDetection() }
-        }
-
         let loop = JevPointerLoop(engine: engineFacade) { [weak self] snapshot in
-            guard let self else { return }
+            guard let self, self.textCommandRunID == runID else { return }
             self.jevStep = snapshot
             self.textCommandPanelManager.setResultsHeight(JevStepPanelView.height(for: snapshot))
             self.textCommandActivityText = snapshot.note.isEmpty
@@ -2566,6 +2579,7 @@ final class CompanionManager: ObservableObject {
                 : snapshot.note
         }
         let outcome = await loop.run(task: trimmedPrompt, app: currentPointerTargetAppName())
+        guard textCommandRunID == runID else { return }
         textCommandActivityText = outcome.message
         if !outcome.ok { lastTranscript = outcome.message }
         PipelineLogStore.shared.record(category: "jev_loop", name: "finished",

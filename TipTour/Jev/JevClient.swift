@@ -121,6 +121,7 @@ actor JevClient {
             let configuration = URLSessionConfiguration.default
             // Reuse the session so consecutive steps can reuse the connection.
             configuration.timeoutIntervalForRequest = 20
+            configuration.timeoutIntervalForResource = 30
             configuration.httpMaximumConnectionsPerHost = 4
             self.session = URLSession(configuration: configuration)
         }

@@ -98,6 +98,8 @@ final class JevPointerLoop {
                 ) else {
                     return finish(reason: "no_local_targets", message: "No visible targets found. Check screen permissions and try again.")
                 }
+                snapshot.note = "JEV is choosing from \(candidates.count) targets"
+                report(snapshot)
                 let (answers, metrics) = try await client.ask(state: request.state, questions: request.questions)
                 try Task.checkCancellation()
                 let decision = try JevGrounding.decision(from: answers, pool: request.pool, metrics: metrics)
@@ -115,7 +117,10 @@ final class JevPointerLoop {
                     return finish(ok: true, reason: nil, message: "JEV reports the task complete after \(history.count) actions.")
                 }
                 if let reason = decision.stopReason {
-                    return finish(reason: reason, message: "No confident next target. Try a more specific click request.")
+                    let message = reason == "target_absent"
+                        ? "JEV couldn't find the requested control among \(candidates.count) targets. Name a visible button or menu."
+                        : "No target is available to click."
+                    return finish(reason: reason, message: message)
                 }
                 guard step <= maxSteps else {
                     return finish(reason: "step_budget", message: "Stopped after \(maxSteps) actions.")

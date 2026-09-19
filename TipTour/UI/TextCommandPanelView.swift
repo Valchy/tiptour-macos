@@ -74,6 +74,15 @@ struct TextCommandPanelView: View {
         .animation(.easeInOut(duration: 0.16), value: companionManager.textCommandActivityText)
         .animation(.easeInOut(duration: 0.16), value: companionManager.jevStep)
         .onExitCommand { companionManager.dismissTextCommandPanel() }
+        .onChange(of: companionManager.isTextCommandRunning) { _, running in
+            isInputFocused = !running
+        }
+        .onChange(of: companionManager.textCommandFocusRequest) { _, _ in
+            isInputFocused = false
+            DispatchQueue.main.async {
+                isInputFocused = !companionManager.isTextCommandRunning
+            }
+        }
         .onAppear {
             commandText = ""
             DispatchQueue.main.async {
