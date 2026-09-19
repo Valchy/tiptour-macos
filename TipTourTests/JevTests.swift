@@ -4,6 +4,21 @@ import Testing
 
 @MainActor
 struct JevTests {
+    @Test func targetContinuityAllowsJitterButRejectsDifferentControls() {
+        func matches(_ box: [Double], label: String = "New Tab", source: String = "ocr",
+                     display: [Double] = [0, 0, 1512, 982]) -> Bool {
+            LocalTargetContinuity.matches(label: label, source: source, box: box, display: display,
+                previousLabel: "New Tab", previousSource: "ocr", previousBox: [100, 50, 160, 65],
+                previousDisplay: [0, 0, 1512, 982])
+        }
+        #expect(matches([101, 49, 161, 66]))
+        #expect(!matches([500, 50, 560, 65]))
+        #expect(!matches([100, 50, 160, 65], label: "Close Tab"))
+        #expect(!matches([100, 50, 160, 65], display: [1512, 0, 1512, 982]))
+        #expect(!matches([100, 50, 160, 65], source: "yolo"))
+        #expect(!matches([100, 50]))
+    }
+
     private let metrics = JevCallMetrics(milliseconds: 1, inputTokens: 100, model: "jev-latest")
     private func candidate(_ id: String = "save", label: String = "Save") -> JevCandidate {
         JevCandidate(id: id, label: label, source: "ocr", confidence: 1, centre: .zero)
