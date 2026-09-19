@@ -30,6 +30,7 @@ No Claude/Hermes integration, separate Flash Lite matcher, image-generation serv
 | File | Purpose |
 | --- | --- |
 | `TipTour/App/CompanionManager.swift` | Shared state, provider coordination, hotkeys, highlight and detection lifecycle |
+| `TipTour/Perception/LocalTargetContinuity.swift` | Matches the same label/source/display across small detection bounds changes before execution (~20 lines) |
 | `TipTour/Core/TipTourMode.swift` | JEV-first mode defaults, key/shortcut metadata and permission requirements (~30 lines) |
 | `TipTour/Core/TipTourEngine.swift` | Grounding, execution, validation and local harness facade |
 | `TipTour/Jev/JevClient.swift` | Keychain-authenticated TypeSafe API client |

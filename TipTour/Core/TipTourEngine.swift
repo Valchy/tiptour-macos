@@ -1116,6 +1116,11 @@ final class TipTourEngine {
             metadata: pointerActionMetadata(pointerActionRequest)
         )
         activityReporter("TipTour locating \(pointerActionRequest.targetLabel ?? pointerActionRequest.goal)")
+        let selectedTargetBeforeRefresh = explicitTarget(
+            requestedTargetID: pointerActionRequest.targetID,
+            requestedTargetMark: pointerActionRequest.targetMark,
+            targets: LocalPerceptionTargetCache.shared.currentTargets()
+        )
         await activateRequestedApplicationForPerceptionIfNeeded(pointerActionRequest.app)
 
         if let targetlessStep = targetlessPlanNextActionStep(for: pointerActionRequest) {
@@ -1170,11 +1175,25 @@ final class TipTourEngine {
             targetID: pointerActionRequest.targetID,
             targetMark: pointerActionRequest.targetMark
         )
-        let explicitlyMatchedTarget = explicitTarget(
-            requestedTargetID: pointerActionRequest.targetID,
-            requestedTargetMark: pointerActionRequest.targetMark,
-            targets: targets
-        )
+        let explicitlyMatchedTarget: LocalPerceptionTargetCache.SnapshotTarget?
+        if let previous = selectedTargetBeforeRefresh {
+            // Marks and pixel-based IDs can change after refresh. Only accept one
+            // spatially overlapping control with the same label on the same display.
+            let matchingTargets = targets.filter { target in
+                LocalTargetContinuity.matches(
+                    label: target.label, source: target.source, box: target.globalBox, display: target.displayFrame,
+                    previousLabel: previous.label, previousSource: previous.source,
+                    previousBox: previous.globalBox, previousDisplay: previous.displayFrame
+                )
+            }
+            explicitlyMatchedTarget = matchingTargets.count == 1 ? matchingTargets[0] : nil
+        } else {
+            explicitlyMatchedTarget = explicitTarget(
+                requestedTargetID: pointerActionRequest.targetID,
+                requestedTargetMark: pointerActionRequest.targetMark,
+                targets: targets
+            )
+        }
         let matchedTarget = explicitlyMatchedTarget ?? (didRequestExactTarget ? nil : bestTarget(
             requestedLabel: pointerActionRequest.targetLabel,
             goal: pointerActionRequest.goal,
@@ -2407,7 +2426,11 @@ final class TipTourEngine {
         return GroundedActionExecutionResult(
             ok: false,
             reason: reason,
-            message: "TipTour ran one grounded action but could not validate it.",
+            message: !attempt.submission.ok
+                ? attempt.submission.message
+                : (attempt.workflowOutcome.status != "completed"
+                    ? (attempt.workflowOutcome.message ?? "The action stopped before completion.")
+                    : "The action completed, but no screen change was detected."),
             attempts: [attempt],
             repaired: false,
             latestTargets: LocalPerceptionTargetCache.shared.currentTargets()
