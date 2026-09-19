@@ -633,7 +633,7 @@
 			repositoryURL = "https://github.com/trycua/cua.git";
 			requirement = {
 				kind = revision;
-				revision = 041916daffebf04ef7ab873f3ebbecfddb913837;
+				revision = 6c31427c763fcaf7277e1636772b064a38af9862;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */
