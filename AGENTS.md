@@ -9,13 +9,13 @@ macOS 14.2+ menu bar-only SwiftUI/AppKit app (`LSUIElement=true`). Two provider 
 - **Gemini realtime**: Ctrl+Option toggles a voice session. Audio and optional screenshots go directly to Gemini using the user's Keychain key. One tool per user turn: a single desktop workflow action or the existing Apple Notes convenience action.
 - **JEV text**: Ctrl+K opens the command panel. TypeSafe's `jev-latest` classifies locally detected screen labels and locations. JEV selects click/double-click/right-click targets, not prose or pixels. Its bounded loop stops on absent/uncertain targets, malformed responses, cancellation, action rejection/pause/failure, or 12 actions, with a final observation after the last action.
 
-Settings → Models contains exactly Gemini and JEV/TypeSafe key inputs. Keys are stored only in macOS Keychain; no environment, sibling project, or hosted-key fallback. The UI must report Keychain errors accurately.
+JEV is the default selected mode. Onboarding is Choose mode → Save that mode’s API key → Grant its permissions; Gemini additionally requires microphone access. The previous onboarding flag is migrated to a new mode-setup completion flag so existing users also choose a mode. Settings → Models shows the selector and only the selected mode’s key input. Keys are stored only in macOS Keychain; no environment, sibling project, or hosted-key fallback. The UI must report Keychain errors accurately.
 
 No Claude/Hermes integration, separate Flash Lite matcher, image-generation service, recording/video pipeline, or Worker proxy is bundled. Do not reintroduce them without an explicit user request.
 
 ## Architecture
 
-- `CompanionManager` coordinates hotkeys, provider sessions, focus highlight, permissions, and overlay state. It owns the cancellable JEV task and prevents overlapping text/voice runs.
+- `CompanionManager` persists the selected mode, initializes Gemini only when used, gates mode-specific shortcuts, and coordinates hotkeys, provider sessions, focus highlight, permissions, and overlay state. It owns the cancellable JEV task and prevents overlapping text/voice runs.
 - `TipTourEngine` is the shared facade for perception, exact targets, workflow submission, action history, and localhost harness operations. `WorkflowRunner` owns pauses, per-operation tokens, target resolution, and post-action checks. `ActionExecutor`/`TipTourActionDriver` deliver CUA input. Never bypass these boundaries.
 - Ground exact local IDs/marks first, then AX, browser DOM/CDP, local CoreML/OCR, and finally Gemini screenshot coordinates. JEV never invents coordinates and never walks stale alternative rankings after a failed action.
 - JEV runs local detection while active without changing the user's persisted Accurate Grounding setting. Its command panel freezes position during execution; Escape/Stop cancels the task and active workflow.
@@ -30,6 +30,7 @@ No Claude/Hermes integration, separate Flash Lite matcher, image-generation serv
 | File | Purpose |
 | --- | --- |
 | `TipTour/App/CompanionManager.swift` | Shared state, provider coordination, hotkeys, highlight and detection lifecycle |
+| `TipTour/Core/TipTourMode.swift` | JEV-first mode defaults, key/shortcut metadata and permission requirements (~30 lines) |
 | `TipTour/Core/TipTourEngine.swift` | Grounding, execution, validation and local harness facade |
 | `TipTour/Jev/JevClient.swift` | Keychain-authenticated TypeSafe API client |
 | `TipTour/Jev/JevGrounding.swift` | Bounded candidate requests and validated decisions |

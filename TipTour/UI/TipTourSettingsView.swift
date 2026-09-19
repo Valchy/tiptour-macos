@@ -51,7 +51,7 @@ struct TipTourSettingsView: View {
 
             Spacer()
 
-            Text("Ctrl+K for text\nCtrl+Option for voice")
+            Text("\(companionManager.selectedMode.title) selected\n\(companionManager.selectedMode.shortcut) to start")
                 .font(.system(size: 10, weight: .medium))
                 .foregroundColor(DS.Colors.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -127,7 +127,7 @@ struct TipTourSettingsView: View {
 
     private var voiceSection: some View {
         VStack(alignment: .leading, spacing: 14) {
-            ProviderSetupView()
+            ProviderSetupView(companionManager: companionManager)
         }
     }
 
@@ -180,6 +180,7 @@ struct TipTourSettingsView: View {
 
     private var permissionsSection: some View {
         VStack(alignment: .leading, spacing: 8) {
+            if companionManager.selectedMode == .gemini {
             permissionRow(
                 title: "Microphone",
                 subtitle: "Required for voice input.",
@@ -192,6 +193,8 @@ struct TipTourSettingsView: View {
                 } else if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone") {
                     NSWorkspace.shared.open(url)
                 }
+            }
+
             }
 
             permissionRow(
@@ -408,7 +411,7 @@ private enum SettingsSection: String, CaseIterable, Identifiable {
     var subtitle: String {
         switch self {
         case .models:
-            return "Two modes. Your own keys."
+            return "Choose your mode and add its API key. JEV is the default."
         case .connections:
             return "Local harnesses and desktop action integrations."
         case .privacy:
