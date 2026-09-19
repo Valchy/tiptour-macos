@@ -1,29 +1,63 @@
 import SwiftUI
 
 struct ProviderSetupView: View {
+    @ObservedObject var companionManager: CompanionManager
+
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            ProviderKeyCard(
-                title: "Gemini realtime",
-                detail: "Speak with Ctrl+Option. Voice and optional screenshots go to Google.",
-                keyName: "geminiAPIKey"
-            )
-            ProviderKeyCard(
-                title: "JEV · TypeSafe",
-                detail: "Type with Ctrl+K. JEV chooses clicks from locally detected screen labels. Text context goes to TypeSafe; images stay on your Mac.",
-                keyName: "jevAPIKey"
-            )
-            Text("Keys are stored in macOS Keychain. Add a key only for the mode you use.")
+            ModeSelectionView(companionManager: companionManager)
+            ProviderKeyCard(mode: companionManager.selectedMode,
+                onKeyChanged: companionManager.refreshProviderKeyStatus)
+                .id(companionManager.selectedMode)
+            Text("Your choice is saved. You can switch modes here any time.")
                 .font(.system(size: 11))
                 .foregroundColor(DS.Colors.textTertiary)
         }
     }
 }
 
-private struct ProviderKeyCard: View {
-    let title: String
-    let detail: String
-    let keyName: String
+struct ModeSelectionView: View {
+    @ObservedObject var companionManager: CompanionManager
+
+    var body: some View {
+        VStack(spacing: 8) {
+            ForEach(TipTourMode.allCases) { mode in
+                Button { companionManager.setSelectedMode(mode) } label: {
+                    HStack(alignment: .top, spacing: 10) {
+                        Image(systemName: mode.systemImage).frame(width: 18)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(mode == .jev ? "JEV · Text" : "Gemini · Voice")
+                                .font(.system(size: 13, weight: .semibold))
+                            Text(mode.summary).font(.system(size: 11))
+                                .foregroundColor(DS.Colors.textSecondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Spacer(minLength: 0)
+                        Image(systemName: companionManager.selectedMode == mode ? "checkmark.circle.fill" : "circle")
+                    }
+                    .foregroundColor(companionManager.selectedMode == mode ? DS.Colors.accent : DS.Colors.textSecondary)
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(RoundedRectangle(cornerRadius: 10)
+                        .fill(companionManager.selectedMode == mode ? DS.Colors.accent.opacity(0.1) : DS.Colors.surface1))
+                    .contentShape(RoundedRectangle(cornerRadius: 10))
+                }
+                .buttonStyle(.plain)
+                .pointerCursor()
+                .disabled(companionManager.isTextCommandRunning)
+                .accessibilityLabel("Select \(mode.title)")
+                .accessibilityValue(companionManager.selectedMode == mode ? "Selected" : "Not selected")
+            }
+        }
+    }
+}
+
+struct ProviderKeyCard: View {
+    let mode: TipTourMode
+    var onKeyChanged: () -> Void = {}
+    private var title: String { mode == .jev ? "JEV / TypeSafe key" : "Gemini key" }
+    private var detail: String { mode.privacySummary }
+    private var keyName: String { mode.keyName }
     @State private var input = ""
     @State private var hasSavedKey = false
     @State private var status = ""
@@ -54,16 +88,22 @@ private struct ProviderKeyCard: View {
                         hasSavedKey = false
                         input = ""
                         status = "Removed"
+                        onKeyChanged()
                     } else {
                         status = "Could not remove the key. Try again."
                     }
                 }
                 .disabled(!hasSavedKey)
                 .pointerCursor()
+
+            }
+            if !status.isEmpty {
                 Text(status).font(.system(size: 11)).foregroundColor(DS.Colors.textSecondary)
             }
+            Text("Stored securely in macOS Keychain.")
+                .font(.system(size: 10)).foregroundColor(DS.Colors.textTertiary)
         }
-        .padding(16)
+        .padding(12)
         .background(RoundedRectangle(cornerRadius: 12).fill(DS.Colors.surface1))
         .onAppear { hasSavedKey = !(KeychainStore.get(forKey: keyName) ?? "").isEmpty }
     }
@@ -75,6 +115,7 @@ private struct ProviderKeyCard: View {
             hasSavedKey = true
             input = ""
             status = "Saved"
+            onKeyChanged()
         } else {
             status = "Could not save to Keychain. Try again."
         }

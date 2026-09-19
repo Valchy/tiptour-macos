@@ -10,7 +10,7 @@ import Foundation
 
 enum TipTourDefaults {
     enum Key: String {
-        case hasCompletedOnboarding
+        case hasCompletedOnboarding = "hasCompletedModeSetup"
         case hasScreenContentPermission
         case isAccurateGroundingEnabled
         case isAutopilotEnabled
@@ -36,6 +36,11 @@ enum TipTourDefaults {
             Key.isPanelPinned.rawValue: false,
             Key.isScreenshotStreamingEnabled.rawValue: true
         ])
+    }
+
+    static var selectedMode: TipTourMode {
+        get { TipTourMode.restored(from: UserDefaults.standard.string(forKey: "selectedMode")) }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: "selectedMode") }
     }
 
     static var hasCompletedOnboarding: Bool {

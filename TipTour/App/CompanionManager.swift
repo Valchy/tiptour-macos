@@ -25,6 +25,38 @@ enum CompanionVoiceState {
 
 @MainActor
 final class CompanionManager: ObservableObject {
+    @Published private(set) var selectedMode = TipTourDefaults.selectedMode
+    @Published private(set) var hasSelectedModeKey = false
+    @Published private(set) var hasCompletedOnboarding = TipTourDefaults.hasCompletedOnboarding
+
+    var hasSelectedModePermissions: Bool {
+        selectedMode.permissionsReady(desktop: hasDesktopPermissions, microphone: hasMicrophonePermission)
+    }
+
+    func refreshProviderKeyStatus() {
+        hasSelectedModeKey = !(KeychainStore.get(forKey: selectedMode.keyName) ?? "").isEmpty
+    }
+
+    func setSelectedMode(_ mode: TipTourMode) {
+        guard selectedMode != mode else { return }
+        cancelTextCommand()
+        stopVoiceSession()
+        textCommandPanelManager.hide()
+        textCommandActivityText = nil
+        voiceState = .idle
+        selectedMode = mode
+        TipTourDefaults.selectedMode = mode
+        refreshProviderKeyStatus()
+    }
+
+    func openSelectedMode() {
+        guard hasCompletedOnboarding, hasSelectedModeKey, hasSelectedModePermissions else { return }
+        switch selectedMode {
+        case .jev: presentTextCommandPanel()
+        case .gemini: startVoiceInputFromUserGesture(reason: "menu bar")
+        }
+    }
+
     @Published private(set) var voiceState: CompanionVoiceState = .idle
     @Published private(set) var lastTranscript: String?
     @Published private(set) var textCommandActivityText: String?
@@ -913,20 +945,15 @@ final class CompanionManager: ObservableObject {
 
     // MARK: - Onboarding
 
-    /// Whether the user has completed onboarding at least once. Persisted
-    /// to UserDefaults so the Start button only appears on first launch.
-    var hasCompletedOnboarding: Bool {
-        get { TipTourDefaults.hasCompletedOnboarding }
-        set { TipTourDefaults.hasCompletedOnboarding = newValue }
-    }
-
-    /// Text streamed character-by-character on the cursor when the user
-    /// first completes onboarding — "press ctrl+option to talk".
+    /// The post-setup shortcut hint follows the selected mode.
     @Published var onboardingPromptText: String = ""
     @Published var onboardingPromptOpacity: Double = 0.0
     @Published var showOnboardingPrompt: Bool = false
 
     func triggerOnboarding() {
+        refreshProviderKeyStatus()
+        guard hasSelectedModeKey, hasSelectedModePermissions else { return }
+        TipTourDefaults.hasCompletedOnboarding = true
         NotificationCenter.default.post(name: .tipTourDismissPanel, object: nil)
         hasCompletedOnboarding = true
         TipTourAnalytics.trackOnboardingStarted()
@@ -939,7 +966,9 @@ final class CompanionManager: ObservableObject {
     }
 
     private func startOnboardingPromptStream() {
-        let message = "press control + option and introduce yourself"
+        let message = selectedMode == .jev
+            ? "press control + K to give JEV a task"
+            : "press control + option to talk with Gemini"
         onboardingPromptText = ""
         showOnboardingPrompt = true
         onboardingPromptOpacity = 0.0
@@ -973,6 +1002,7 @@ final class CompanionManager: ObservableObject {
     // MARK: - Lifecycle
 
     func start() {
+        refreshProviderKeyStatus()
         refreshAllPermissions()
         print("🔑 TipTour start — accessibility: \(hasAccessibilityPermission), screen: \(hasScreenRecordingPermission), mic: \(hasMicrophonePermission), screenContent: \(hasScreenContentPermission), onboarded: \(hasCompletedOnboarding)")
         startPermissionPolling()
@@ -986,10 +1016,6 @@ final class CompanionManager: ObservableObject {
         let systemWide = AXUIElementCreateSystemWide()
         AXUIElementSetMessagingTimeout(systemWide, 0.4)
 
-        // Touch the lazy property so the backend is constructed and the
-        // publishers are subscribed BEFORE the user opens the panel /
-        // presses the hotkey.
-        _ = voiceBackend
         bindShortcutTransitions()
         bindTextCommandShortcut()
         bindRadialInputShortcut()
@@ -1490,6 +1516,14 @@ final class CompanionManager: ObservableObject {
     }
 
     private func startVoiceInputFromUserGesture(reason: String) {
+        guard hasCompletedOnboarding else {
+            presentTransientOverlayHint("Finish setup from the TipTour menu bar icon.")
+            return
+        }
+        guard selectedMode == .gemini else {
+            presentTransientOverlayHint("JEV is selected. Press Ctrl+K to type, or choose Gemini in Settings.")
+            return
+        }
         guard !isTextCommandRunning else { return }
         captureTargetAppContextForShortcutPress(reason: reason)
 
@@ -1516,6 +1550,14 @@ final class CompanionManager: ObservableObject {
     }
 
     private func presentTextCommandPanel() {
+        guard hasCompletedOnboarding else {
+            presentTransientOverlayHint("Finish setup from the TipTour menu bar icon.")
+            return
+        }
+        guard selectedMode == .jev else {
+            presentTransientOverlayHint("Choose JEV in Settings to use text commands.")
+            return
+        }
         captureTargetAppContextForShortcutPress(reason: "text command")
         NotificationCenter.default.post(name: .tipTourDismissPanel, object: nil)
         textCommandActivityText = nil
@@ -1759,7 +1801,7 @@ final class CompanionManager: ObservableObject {
         forceFreshScreenshot: Bool = false,
         shouldAskForAcknowledgement: Bool = false
     ) async -> Bool {
-        guard voiceBackend.isActive,
+        guard _voiceBackend?.isActive == true,
               let context = lastFocusHighlightContext else {
             return false
         }
@@ -1779,7 +1821,7 @@ final class CompanionManager: ObservableObject {
     }
 
     private func sendLatestHoverWindowContextToGeminiIfPossible() {
-        guard voiceBackend.isActive,
+        guard _voiceBackend?.isActive == true,
               let hoverWindowContext = lastHoverWindowContext else {
             return
         }
@@ -2294,7 +2336,7 @@ final class CompanionManager: ObservableObject {
             pointHandler: { [weak self] resolution in
                 self?.pointAtResolution(resolution)
             },
-            latestCapture: voiceBackend.latestCapture
+            latestCapture: _voiceBackend?.latestCapture
         )
     }
 
@@ -2448,6 +2490,7 @@ final class CompanionManager: ObservableObject {
     /// path: by the time the first CUA plan arrives,
     /// resolution returns in ~10-30ms instead of 100-400ms.
     func startVoiceSession() {
+        guard selectedMode == .gemini, hasCompletedOnboarding else { return }
         guard voiceStartTask == nil else { return }
         guard !isTextCommandRunning else {
             textCommandActivityText = "Stop JEV before starting voice"

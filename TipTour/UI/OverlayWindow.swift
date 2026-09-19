@@ -417,7 +417,7 @@ struct BlueCursorView: View {
                     }
             }
 
-            // Onboarding prompt — "press control + option and say hi" streamed after setup
+            // Shortcut hint for the mode chosen during setup.
             if isCursorOnThisScreen && companionManager.showOnboardingPrompt && !companionManager.onboardingPromptText.isEmpty {
                 Text(companionManager.onboardingPromptText)
                     .font(.system(size: 11, weight: .medium))
