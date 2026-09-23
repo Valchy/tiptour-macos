@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 import Testing
 @testable import TipTour
@@ -121,5 +122,104 @@ struct JevTests {
         await #expect(throws: JevError.self) {
             try await client.ask(state: [:], questions: [:])
         }
+    }
+
+    @Test func vercelGatewayKeyRoutesThroughGatewayAndSendsYesNoChoices() throws {
+        #expect(JevRoute(apiKey: "vck_test") == .vercelAIGateway)
+        #expect(JevRoute(apiKey: "  vck_test\n") == .vercelAIGateway)
+        #expect(JevRoute(apiKey: "ts_test") == .typeSafeDirect)
+
+        let request = try JevVercelGateway.urlRequest(apiKey: "vck_test", state: ["task": "Save"], questions: [
+            "done": .noul(instructions: "Done?"),
+            "kind": .choice(instructions: "How?", criteria: ["click": "Click"])
+        ])
+        #expect(request.url?.absoluteString == "https://ai-gateway.vercel.sh/v4/ai/evaluation-model")
+        #expect(request.httpMethod == "POST")
+        #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer vck_test")
+        #expect(request.value(forHTTPHeaderField: "ai-model-id") == "typesafe-ai/jev")
+        #expect(request.value(forHTTPHeaderField: "ai-evaluation-model-specification-version") == "4")
+        #expect(request.value(forHTTPHeaderField: "ai-gateway-auth-method") == "api-key")
+
+        let requestBodyData = try #require(request.httpBody)
+        let body = try #require(JSONSerialization.jsonObject(with: requestBodyData) as? [String: Any])
+        let questions = try #require(body["questions"] as? [String: [String: Any]])
+        #expect(questions["done"]?["type"] as? String == "choice")
+        #expect((questions["done"]?["criteria"] as? [String: String])?.keys.sorted() == ["no", "yes"])
+        #expect(questions["kind"]?["type"] as? String == "choice")
+        #expect(body["model"] == nil)
+        let gatewayOptions = (body["providerOptions"] as? [String: Any])?["gateway"] as? [String: Bool]
+        #expect(gatewayOptions?["zeroDataRetention"] == true)
+        #expect(gatewayOptions?["disallowPromptTraining"] == true)
+    }
+
+    @Test func vercelGatewayResponseMapsIntoExistingDecision() throws {
+        let response = try JevVercelGateway.decodeResponse(Data(#"""
+            {"answers":{
+              "pick":{"type":"choice","choice":"save","probabilities":{"save":0.9,"__none__":0.1}},
+              "kind":{"type":"choice","choice":"click","probabilities":{"click":1,"double_click":0,"right_click":0}},
+              "done":{"type":"choice","choice":"no","probabilities":{"yes":0.1,"no":0.9}},
+              "absent":{"type":"choice","choice":"no","probabilities":{"yes":0.2,"no":0.8}}},
+             "usage":{"inputTokens":321,"outputTokens":4},"warnings":[]}
+            """#.utf8), noulQuestionIDs: ["done", "absent"])
+        #expect(response.usage?.input_tokens == 321)
+        #expect(response.model == "typesafe-ai/jev")
+
+        let decision = try JevGrounding.decision(from: response.answers, pool: [candidate()], metrics: metrics)
+        #expect(decision.best?.candidate.id == "save")
+        #expect(decision.absent == 0.2)
+        #expect(decision.done == 0.1)
+        #expect(decision.actionKind == "click")
+    }
+
+    @Test func functionKeyHoldTalksOnlyAfterThresholdAndReleaseSubmits() {
+        var holdTracker = FunctionKeyPushToTalkShortcut.HoldTracker()
+        #expect(holdTracker.handle(.functionKeyWentDown) == .startHoldCountdown)
+        #expect(holdTracker.handle(.functionKeyWentDown) == .none)
+        #expect(holdTracker.holdCountdownFinished() == .publish(.pressed))
+        #expect(holdTracker.handle(.functionKeyWentUp) == .publish(.released))
+
+        // A quick tap never starts listening.
+        #expect(holdTracker.handle(.functionKeyWentDown) == .startHoldCountdown)
+        #expect(holdTracker.handle(.functionKeyWentUp) == .cancelHoldCountdown)
+        #expect(holdTracker.holdCountdownFinished() == .none)
+    }
+
+    @Test func functionKeyChordsCancelPushToTalk() {
+        var holdTracker = FunctionKeyPushToTalkShortcut.HoldTracker()
+        // Fn+Arrow before the threshold: never listens.
+        #expect(holdTracker.handle(.functionKeyWentDown) == .startHoldCountdown)
+        #expect(holdTracker.handle(.otherKeyOrModifierActivity) == .cancelHoldCountdown)
+        #expect(holdTracker.holdCountdownFinished() == .none)
+        #expect(holdTracker.handle(.functionKeyWentUp) == .cancelHoldCountdown)
+
+        // Another key after listening started: cancelled, and release is silent.
+        #expect(holdTracker.handle(.functionKeyWentDown) == .startHoldCountdown)
+        #expect(holdTracker.holdCountdownFinished() == .publish(.pressed))
+        #expect(holdTracker.handle(.otherKeyOrModifierActivity) == .publish(.cancelled))
+        #expect(holdTracker.handle(.functionKeyWentUp) == .cancelHoldCountdown)
+
+        // Stopping the monitor mid-hold never leaves the microphone on.
+        #expect(holdTracker.handle(.functionKeyWentDown) == .startHoldCountdown)
+        #expect(holdTracker.holdCountdownFinished() == .publish(.pressed))
+        #expect(holdTracker.reset() == .publish(.cancelled))
+    }
+
+    @Test func onlyTheFunctionKeyItselfChangesFunctionKeyState() {
+        func keyActivity(_ eventType: CGEventType, keyCode: UInt16,
+                         flags: CGEventFlags) -> FunctionKeyPushToTalkShortcut.KeyActivity {
+            FunctionKeyPushToTalkShortcut.keyActivity(
+                eventTypeRawValue: eventType.rawValue, keyCode: keyCode, modifierFlagsRawValue: flags.rawValue)
+        }
+        #expect(keyActivity(.flagsChanged, keyCode: 63, flags: .maskSecondaryFn) == .functionKeyWentDown)
+        #expect(keyActivity(.flagsChanged, keyCode: 63, flags: []) == .functionKeyWentUp)
+        #expect(keyActivity(.flagsChanged, keyCode: 63, flags: [.maskSecondaryFn, .maskShift]) == .otherKeyOrModifierActivity)
+        // Arrow keys carry the Fn flag on keyDown even when Fn isn't held.
+        #expect(keyActivity(.keyDown, keyCode: 123, flags: .maskSecondaryFn) == .otherKeyOrModifierActivity)
+        #expect(keyActivity(.keyUp, keyCode: 123, flags: .maskSecondaryFn) == .irrelevant)
+        // Fn+media key (NX_SYSDEFINED, aux control buttons) cancels; other system events don't.
+        #expect(FunctionKeyPushToTalkShortcut.keyActivity(eventTypeRawValue: 14, keyCode: 0,
+            modifierFlagsRawValue: 0, systemDefinedEventSubtype: 8) == .otherKeyOrModifierActivity)
+        #expect(FunctionKeyPushToTalkShortcut.keyActivity(eventTypeRawValue: 14, keyCode: 0,
+            modifierFlagsRawValue: 0, systemDefinedEventSubtype: 7) == .irrelevant)
     }
 }

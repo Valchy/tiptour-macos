@@ -3,7 +3,6 @@ import SwiftUI
 struct TextCommandPanelView: View {
     @ObservedObject var companionManager: CompanionManager
     @FocusState private var isInputFocused: Bool
-    @State private var commandText: String = ""
 
     var body: some View {
         let activityText = companionManager.textCommandActivityText ?? ""
@@ -11,12 +10,15 @@ struct TextCommandPanelView: View {
 
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 9) {
-                Image(systemName: "command")
+                Image(systemName: companionManager.isJevVoiceDictationListening ? "mic.fill" : "command")
                     .font(.system(size: 11, weight: .medium))
                     .foregroundColor(DS.Colors.textTertiary)
                     .frame(width: 16, height: 16)
 
-                TextField("Ask JEV to click something…", text: $commandText)
+                TextField(
+                    companionManager.isJevVoiceDictationListening ? "Listening…" : "Ask JEV to click something…",
+                    text: $companionManager.textCommandDraftText
+                )
                     .textFieldStyle(.plain)
                     .font(.system(size: 13, weight: .regular))
                     .foregroundColor(DS.Colors.textPrimary)
@@ -27,7 +29,7 @@ struct TextCommandPanelView: View {
                         submitCommand()
                     }
                     .onExitCommand {
-                        commandText = ""
+                        companionManager.textCommandDraftText = ""
                         companionManager.dismissTextCommandPanel()
                     }
                 if companionManager.isTextCommandRunning {
@@ -84,7 +86,7 @@ struct TextCommandPanelView: View {
             }
         }
         .onAppear {
-            commandText = ""
+            companionManager.textCommandDraftText = ""
             DispatchQueue.main.async {
                 isInputFocused = true
             }
@@ -97,9 +99,9 @@ struct TextCommandPanelView: View {
     }
 
     private func submitCommand() {
-        let trimmedCommand = commandText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedCommand = companionManager.textCommandDraftText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedCommand.isEmpty else { return }
-        commandText = ""
+        companionManager.textCommandDraftText = ""
         companionManager.submitTextCommand(trimmedCommand)
     }
 }

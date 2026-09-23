@@ -7,9 +7,9 @@ This file is the source of truth for coding agents; CLAUDE.md is a symlink.
 macOS 14.2+ menu bar-only SwiftUI/AppKit app (`LSUIElement=true`). Two provider modes ship together on `main`:
 
 - **Gemini realtime**: Ctrl+Option toggles a voice session. Audio and optional screenshots go directly to Gemini using the user's Keychain key. One tool per user turn: a single desktop workflow action or the existing Apple Notes convenience action.
-- **JEV text**: Ctrl+K opens the command panel. TypeSafe's `jev-latest` classifies locally detected screen labels and locations. JEV selects click/double-click/right-click targets, not prose or pixels. It acts on the top-ranked target without minimum probability or absent-score cutoffs. Its bounded loop stops on an explicit none choice, task completion, malformed responses, cancellation, action rejection/pause/failure, or 12 actions, with a final observation after the last action.
+- **JEV text and voice**: Ctrl+K opens the command panel. Holding Fn (globe) on its own for 0.25 s dictates the task instead: on-device speech recognition only (`requiresOnDeviceRecognition`, never server STT) streams the transcript into the same panel, and releasing Fn submits it exactly like Return. Any other key or modifier during the hold cancels it so Fn chords keep working. TypeSafe's `jev-latest` classifies locally detected screen labels and locations. JEV selects click/double-click/right-click targets, not prose or pixels. It acts on the top-ranked target without minimum probability or absent-score cutoffs. Its bounded loop stops on an explicit none choice, task completion, malformed responses, cancellation, action rejection/pause/failure, or 12 actions, with a final observation after the last action.
 
-JEV is the default selected mode. Onboarding is Choose mode → Save that mode’s API key → Grant its permissions; Gemini additionally requires microphone access. The previous onboarding flag is migrated to a new mode-setup completion flag so existing users also choose a mode. Settings → Models shows the selector and only the selected mode’s key input. Keys are stored only in macOS Keychain; no environment, sibling project, or hosted-key fallback. The UI must report Keychain errors accurately.
+JEV is the default selected mode. Onboarding is Choose mode → Save that mode’s API key → Grant its permissions; Gemini additionally requires microphone access. JEV's hold-Fn voice asks for Microphone and Speech Recognition lazily on the first hold and never gates onboarding. The JEV key may be a TypeSafe key or a Vercel AI Gateway key (`vck_…`); the prefix routes requests through the gateway's evaluation-model endpoint (model `typesafe-ai/jev`, zero data retention requested), and answers are mapped back into the same `JevResponse` so validation is identical. The previous onboarding flag is migrated to a new mode-setup completion flag so existing users also choose a mode. Settings → Models shows the selector and only the selected mode’s key input. Keys are stored only in macOS Keychain; no environment, sibling project, or hosted-key fallback. The UI must report Keychain errors accurately.
 
 No Claude/Hermes integration, separate Flash Lite matcher, image-generation service, recording/video pipeline, or Worker proxy is bundled. Do not reintroduce them without an explicit user request.
 
@@ -20,7 +20,7 @@ No Claude/Hermes integration, separate Flash Lite matcher, image-generation serv
 - Ground exact local IDs/marks first, then AX, browser DOM/CDP, local CoreML/OCR, and finally Gemini screenshot coordinates. JEV never invents coordinates and never walks stale alternative rankings after a failed action.
 - JEV runs local detection while active without changing the user's persisted Accurate Grounding setting. Its command panel freezes position during execution; Escape/Stop cancels the task and active workflow.
 - Ctrl+Shift paints focus context for Gemini. Ctrl+Option+Command is a Speak/Type/Highlight input chooser, not an extra model mode.
-- Auto-click controls action delivery; Gemini supports point-only guidance, while JEV requires auto-click. CUA's toggle gates all desktop actions. Screenshots controls remote images, not local perception. Microphone is needed only for Gemini.
+- Auto-click controls action delivery; Gemini supports point-only guidance, while JEV requires auto-click. CUA's toggle gates all desktop actions. Screenshots controls remote images, not local perception. Microphone is required only for Gemini; JEV uses it optionally for hold-Fn dictation.
 - AX is enabled for Electron on app activation. Preserve batched AX reads, messaging timeouts, target app pinning, clipboard/selected-range protections, and event-driven detection refreshes.
 - The localhost harness (`127.0.0.1:19474`) exposes the engine to developer clients. `/v1/agent-contract` is canonical. Preserve trace IDs, single-action workflow limits, and explicit deterministic `/v1/tasks` sequences.
 - Portable app instructions live in `TipTour/Skills/**/SKILL.md`; precedence is user overrides, project skills, then bundled skills. General documentation belongs outside the app target.
@@ -33,7 +33,11 @@ No Claude/Hermes integration, separate Flash Lite matcher, image-generation serv
 | `TipTour/Perception/LocalTargetContinuity.swift` | Matches the same label/source/display across small detection bounds changes before execution (~20 lines) |
 | `TipTour/Core/TipTourMode.swift` | JEV-first mode defaults, key/shortcut metadata and permission requirements (~30 lines) |
 | `TipTour/Core/TipTourEngine.swift` | Grounding, execution, validation and local harness facade |
-| `TipTour/Jev/JevClient.swift` | Keychain-authenticated TypeSafe API client |
+| `TipTour/Jev/JevClient.swift` | Keychain-authenticated Jev client (TypeSafe direct or Vercel AI Gateway, chosen by key prefix) |
+| `TipTour/Jev/JevVercelGateway.swift` | `JevRoute` plus the pure Vercel AI Gateway request/response mapping (~135 lines) |
+| `TipTour/Utilities/FunctionKeyPushToTalkShortcut.swift` | Pure hold-Fn state machine: 0.25 s threshold, chords cancel (~140 lines) |
+| `TipTour/Utilities/GlobalFunctionKeyPushToTalkMonitor.swift` | Listen-only event tap publishing Fn pressed/released/cancelled for JEV voice |
+| `TipTour/Voice/OnDeviceDictationSession.swift` | On-device SFSpeechRecognizer recording for JEV hold-Fn voice, plus its permissions |
 | `TipTour/Jev/JevGrounding.swift` | Bounded candidate requests and validated decisions |
 | `TipTour/Jev/JevPointerLoop.swift` | Cancellable JEV action loop and immutable UI snapshots |
 | `TipTour/Jev/JevStepPanelView.swift` | Decision progress in the text panel |
@@ -52,7 +56,7 @@ See `docs/source-layout.md` for the remaining directory responsibilities.
 
 Open `tiptour-macos.xcodeproj`, select TipTour, set the signing team, and build/run in Xcode.
 
-**Do NOT run `xcodebuild` from the terminal** — it invalidates TCC permissions and the app will need to re-request screen recording/accessibility access. Pure Swift parsing/typechecking and isolated tests are permitted without replacing or launching the installed app. Run `scripts/test-jev.sh` for the JEV decision suite.
+**Do NOT run `xcodebuild` from the terminal** — it invalidates TCC permissions and the app will need to re-request screen recording/accessibility access. Pure Swift parsing/typechecking and isolated tests are permitted without replacing or launching the installed app. Run `scripts/test-jev.sh` for the JEV decision suite (it also covers the Vercel gateway mapping and the hold-Fn state machine; any new pure file those depend on must be added to its `cp` list).
 
 Known non-blocking Swift 6 concurrency and deprecated `onChange` warnings must not be fixed as incidental cleanup.
 

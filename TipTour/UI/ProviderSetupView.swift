@@ -55,19 +55,21 @@ struct ModeSelectionView: View {
 struct ProviderKeyCard: View {
     let mode: TipTourMode
     var onKeyChanged: () -> Void = {}
-    private var title: String { mode == .jev ? "JEV / TypeSafe key" : "Gemini key" }
+    private var title: String { mode == .jev ? "JEV key" : "Gemini key" }
     private var detail: String { mode.privacySummary }
     private var keyName: String { mode.keyName }
     @State private var input = ""
     @State private var hasSavedKey = false
     @State private var status = ""
+    /// JEV only: which service the saved key routes through, read from the key.
+    @State private var savedJevRoute: JevRoute?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text(title).font(.system(size: 14, weight: .semibold))
                 Spacer()
-                Text(hasSavedKey ? "Key saved" : "Key needed")
+                Text(savedKeyStatusText)
                     .font(.system(size: 11))
                     .foregroundColor(hasSavedKey ? DS.Colors.success : DS.Colors.textTertiary)
             }
@@ -75,6 +77,12 @@ struct ProviderKeyCard: View {
                 .font(.system(size: 12))
                 .foregroundColor(DS.Colors.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
+            if mode == .jev {
+                Text("Paste a TypeSafe key, or a Vercel AI Gateway key (vck_…). Gateway requests ask for zero data retention.")
+                    .font(.system(size: 11))
+                    .foregroundColor(DS.Colors.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             SecureField(hasSavedKey ? "Paste a replacement key" : "Paste your API key", text: $input)
                 .textFieldStyle(.roundedBorder)
                 .accessibilityLabel("\(title) API key")
@@ -86,6 +94,7 @@ struct ProviderKeyCard: View {
                 Button("Remove key") {
                     if KeychainStore.delete(forKey: keyName) {
                         hasSavedKey = false
+                        savedJevRoute = nil
                         input = ""
                         status = "Removed"
                         onKeyChanged()
@@ -105,7 +114,17 @@ struct ProviderKeyCard: View {
         }
         .padding(12)
         .background(RoundedRectangle(cornerRadius: 12).fill(DS.Colors.surface1))
-        .onAppear { hasSavedKey = !(KeychainStore.get(forKey: keyName) ?? "").isEmpty }
+        .onAppear {
+            let savedKey = KeychainStore.get(forKey: keyName) ?? ""
+            hasSavedKey = !savedKey.isEmpty
+            savedJevRoute = (mode == .jev && hasSavedKey) ? JevRoute(apiKey: savedKey) : nil
+        }
+    }
+
+    private var savedKeyStatusText: String {
+        guard hasSavedKey else { return "Key needed" }
+        guard let savedJevRoute else { return "Key saved" }
+        return "Key saved · \(savedJevRoute.displayName)"
     }
 
     private func save() {
@@ -114,7 +133,13 @@ struct ProviderKeyCard: View {
         if KeychainStore.set(trimmed, forKey: keyName) {
             hasSavedKey = true
             input = ""
-            status = "Saved"
+            if mode == .jev {
+                let jevRoute = JevRoute(apiKey: trimmed)
+                savedJevRoute = jevRoute
+                status = "Saved · using \(jevRoute.displayName)"
+            } else {
+                status = "Saved"
+            }
             onKeyChanged()
         } else {
             status = "Could not save to Keychain. Try again."

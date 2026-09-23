@@ -41,7 +41,10 @@ final class TextCommandPanelManager {
         self.companionManager = companionManager
     }
 
-    func show() {
+    /// `takingKeyboardFocus: false` is for hold-Fn voice: while Fn is down the
+    /// user's next key may be the second half of an Fn chord (Fn+Delete,
+    /// Fn+Arrow), and that key must reach their app, not this panel.
+    func show(takingKeyboardFocus: Bool = true) {
         guard let companionManager else { return }
 
         if panel == nil {
@@ -53,10 +56,21 @@ final class TextCommandPanelManager {
 
         panel?.alphaValue = 0
         positionPanel(at: mouseLocation, animated: false)
-        panel?.makeKeyAndOrderFront(nil)
+        if takingKeyboardFocus {
+            panel?.makeKeyAndOrderFront(nil)
+        }
         panel?.orderFrontRegardless()
         fadePanel(to: 1)
         startMouseTracking()
+    }
+
+    var isVisible: Bool { panel?.isVisible == true }
+
+    /// Gives an already visible panel keyboard focus, e.g. once Fn is released,
+    /// so Escape can stop the run and the input can be edited.
+    func takeKeyboardFocus() {
+        guard let panel, panel.isVisible else { return }
+        panel.makeKey()
     }
 
     func hide() {

@@ -179,7 +179,7 @@ struct CompanionPanelView: View {
                     .id(companionManager.selectedMode)
             case .permissions:
                 Text(companionManager.selectedMode == .jev
-                    ? "JEV needs access to see screen controls and click them. No microphone needed."
+                    ? "JEV needs access to see screen controls and click them. The microphone is only asked for the first time you hold Fn to talk."
                     : "Gemini needs desktop access and your microphone for voice commands.")
                     .font(.system(size: 11)).foregroundColor(DS.Colors.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)

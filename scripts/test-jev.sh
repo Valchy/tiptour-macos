@@ -15,6 +15,7 @@ let package = Package(
 )
 SWIFT
 cp "$project_dir/TipTour/Jev/JevClient.swift" "$project_dir/TipTour/Jev/JevGrounding.swift" \
+   "$project_dir/TipTour/Jev/JevVercelGateway.swift" "$project_dir/TipTour/Utilities/FunctionKeyPushToTalkShortcut.swift" \
    "$project_dir/TipTour/Perception/LocalTargetContinuity.swift" "$project_dir/TipTour/Core/TipTourMode.swift" "$project_dir/TipTour/Utilities/KeychainStore.swift" "$test_dir/Sources/JevCore/"
 sed 's/@testable import TipTour/@testable import JevCore/' \
     "$project_dir/TipTourTests/JevTests.swift" > "$test_dir/Tests/JevCoreTests/JevTests.swift"

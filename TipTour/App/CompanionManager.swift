@@ -39,6 +39,7 @@ final class CompanionManager: ObservableObject {
 
     func setSelectedMode(_ mode: TipTourMode) {
         guard selectedMode != mode else { return }
+        cancelJevVoiceDictation()
         cancelTextCommand()
         stopVoiceSession()
         textCommandPanelManager.hide()
@@ -109,12 +110,14 @@ final class CompanionManager: ObservableObject {
     let globalTextCommandShortcutMonitor = GlobalTextCommandShortcutMonitor()
     let globalRadialInputShortcutMonitor = GlobalRadialInputShortcutMonitor()
     let globalHighlightShortcutMonitor = GlobalHighlightShortcutMonitor()
+    let globalFunctionKeyPushToTalkMonitor = GlobalFunctionKeyPushToTalkMonitor()
     let overlayWindowManager = OverlayWindowManager()
 
     private var shortcutTransitionCancellable: AnyCancellable?
     private var textCommandShortcutCancellable: AnyCancellable?
     private var radialInputShortcutCancellable: AnyCancellable?
     private var highlightTransitionCancellable: AnyCancellable?
+    private var functionKeyPushToTalkTransitionCancellable: AnyCancellable?
     private var accessibilityCheckTimer: Timer?
     private var voiceAudioPowerCancellable: AnyCancellable?
     private var voiceModelSpeakingCancellable: AnyCancellable?
@@ -139,6 +142,16 @@ final class CompanionManager: ObservableObject {
     private var textCommandRunID: UUID?
     @Published private(set) var textCommandFocusRequest = UUID()
     @Published private(set) var isTextCommandRunning = false
+    /// The JEV panel's input text. Lives here (not in the view) so holding Fn
+    /// can stream the live transcript into it.
+    @Published var textCommandDraftText = ""
+
+    /// On-device recording for "hold Fn and say the JEV task". Nil when idle.
+    private var jevVoiceDictationSession: OnDeviceDictationSession?
+    /// Identifies the current Fn hold so a late recognizer callback from an
+    /// earlier, cancelled hold can never write into the panel or submit a task.
+    private var jevVoiceDictationHoldID: UUID?
+    @Published private(set) var isJevVoiceDictationListening = false
 
     private var shouldRunNativeDetection: Bool {
         isAccurateGroundingEnabled || isDetectionOverlayEnabled || isTextCommandRunning
@@ -969,7 +982,7 @@ final class CompanionManager: ObservableObject {
 
     private func startOnboardingPromptStream() {
         let message = selectedMode == .jev
-            ? "press control + K to give JEV a task"
+            ? "press control + K, or hold fn and speak, to give JEV a task"
             : "press control + option to talk with Gemini"
         onboardingPromptText = ""
         showOnboardingPrompt = true
@@ -1022,6 +1035,7 @@ final class CompanionManager: ObservableObject {
         bindTextCommandShortcut()
         bindRadialInputShortcut()
         bindHighlightTransitions()
+        bindFunctionKeyPushToTalkTransitions()
         beginTrackingUserTargetApp()
 
         // Wire the autopilot toggle into the workflow runner. The
@@ -1047,6 +1061,7 @@ final class CompanionManager: ObservableObject {
     }
 
     func stop() {
+        cancelJevVoiceDictation()
         cancelTextCommand()
         stopVoiceSession()
         stopNativeDetection()
@@ -1054,11 +1069,13 @@ final class CompanionManager: ObservableObject {
         globalTextCommandShortcutMonitor.stop()
         globalRadialInputShortcutMonitor.stop()
         globalHighlightShortcutMonitor.stop()
+        globalFunctionKeyPushToTalkMonitor.stop()
         overlayWindowManager.hideOverlay()
         shortcutTransitionCancellable?.cancel()
         textCommandShortcutCancellable?.cancel()
         radialInputShortcutCancellable?.cancel()
         highlightTransitionCancellable?.cancel()
+        functionKeyPushToTalkTransitionCancellable?.cancel()
         accessibilityCheckTimer?.invalidate()
         accessibilityCheckTimer = nil
         voiceAudioPowerCancellable?.cancel()
@@ -1319,11 +1336,13 @@ final class CompanionManager: ObservableObject {
             globalTextCommandShortcutMonitor.start()
             globalRadialInputShortcutMonitor.start()
             globalHighlightShortcutMonitor.start()
+            globalFunctionKeyPushToTalkMonitor.start()
         } else {
             globalPushToTalkShortcutMonitor.stop()
             globalTextCommandShortcutMonitor.stop()
             globalRadialInputShortcutMonitor.stop()
             globalHighlightShortcutMonitor.stop()
+            globalFunctionKeyPushToTalkMonitor.stop()
         }
 
         hasScreenRecordingPermission = WindowPositionManager.hasScreenRecordingPermission()
@@ -1420,6 +1439,15 @@ final class CompanionManager: ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] in
                 self?.presentTextCommandPanel()
+            }
+    }
+
+    private func bindFunctionKeyPushToTalkTransitions() {
+        functionKeyPushToTalkTransitionCancellable = globalFunctionKeyPushToTalkMonitor
+            .transitionPublisher
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] transition in
+                self?.handleFunctionKeyPushToTalkTransition(transition)
             }
     }
 
@@ -1525,7 +1553,7 @@ final class CompanionManager: ObservableObject {
             return
         }
         guard selectedMode == .gemini else {
-            presentTransientOverlayHint("JEV is selected. Press Ctrl+K to type, or choose Gemini in Settings.")
+            presentTransientOverlayHint("JEV is selected. Press Ctrl+K to type or hold Fn to talk, or choose Gemini in Settings.")
             return
         }
         guard !isTextCommandRunning else { return }
@@ -1541,9 +1569,9 @@ final class CompanionManager: ObservableObject {
 
         TipTourAnalytics.trackPushToTalkStarted()
 
-        // Voice is intentionally a single realtime path. Text commands can
-        // use JEV, while speech should not branch into
-        // a second STT/TTS stack.
+        // Gemini voice is intentionally a single realtime path. JEV's hold-Fn
+        // dictation is separate: on-device speech-to-text that only produces
+        // a text task, never a second realtime voice stack.
         if voiceBackend.isActive || voiceStartTask != nil {
             stopVoiceSession()
             voiceState = .idle
@@ -1553,7 +1581,7 @@ final class CompanionManager: ObservableObject {
         }
     }
 
-    private func presentTextCommandPanel() {
+    private func presentTextCommandPanel(takingKeyboardFocus: Bool = true) {
         guard hasCompletedOnboarding else {
             presentTransientOverlayHint("Finish setup from the TipTour menu bar icon.")
             return
@@ -1565,7 +1593,7 @@ final class CompanionManager: ObservableObject {
         captureTargetAppContextForShortcutPress(reason: "text command")
         NotificationCenter.default.post(name: .tipTourDismissPanel, object: nil)
         textCommandActivityText = nil
-        textCommandPanelManager.show()
+        textCommandPanelManager.show(takingKeyboardFocus: takingKeyboardFocus)
         textCommandFocusRequest = UUID()
 
         Task { [weak self] in
@@ -1574,6 +1602,171 @@ final class CompanionManager: ObservableObject {
                 await self.refreshNativeDetectionOverlay(reason: "text command opened")
             }
         }
+    }
+
+    // MARK: - JEV hold-Fn voice
+
+    /// What the current hold-Fn gesture is doing, from `.pressed` until its
+    /// `.released` or `.cancelled`. Nil when Fn isn't held for JEV voice.
+    private enum JevVoiceFunctionKeyHold {
+        /// Recording. The snapshot lets a cancelled hold (it turned out to be
+        /// an Fn chord) put the panel back exactly as it was.
+        case listening(holdID: UUID, draftTextBeforeHold: String, wasPanelVisibleBeforeHold: Bool)
+        /// Voice can't run yet. Nothing is shown while Fn is down, because the
+        /// hold may still become an Fn chord; `whenReleased` runs only if Fn is
+        /// released on its own.
+        case blocked(whenReleased: JevVoiceBlockedHoldReleaseAction)
+    }
+
+    private enum JevVoiceBlockedHoldReleaseAction {
+        case showHint(String)
+        case requestMicrophoneAndSpeechPermission
+    }
+
+    private var activeJevVoiceFunctionKeyHold: JevVoiceFunctionKeyHold?
+
+    private static let jevVoicePermissionDeniedMessage =
+        "Allow Microphone and Speech Recognition for TipTour in System Settings → Privacy & Security"
+
+    private func handleFunctionKeyPushToTalkTransition(_ transition: FunctionKeyPushToTalkShortcut.Transition) {
+        switch transition {
+        case .pressed:
+            beginJevVoiceFunctionKeyHold()
+        case .released:
+            endJevVoiceFunctionKeyHoldByRelease()
+        case .cancelled:
+            endJevVoiceFunctionKeyHoldByChord()
+        }
+    }
+
+    private func beginJevVoiceFunctionKeyHold() {
+        // Fn is pressed for many everyday reasons, so stay silent unless JEV
+        // could actually take a task right now.
+        guard activeJevVoiceFunctionKeyHold == nil,
+              hasCompletedOnboarding,
+              selectedMode == .jev,
+              !isTextCommandRunning,
+              _voiceBackend?.isActive != true else { return }
+        // The previous hold is still being transcribed; its panel says so.
+        guard jevVoiceDictationSession == nil else { return }
+
+        guard !(KeychainStore.jevAPIKey ?? "").isEmpty else {
+            activeJevVoiceFunctionKeyHold = .blocked(whenReleased: .showHint("Add your JEV key in Settings → Models"))
+            return
+        }
+        switch OnDeviceDictationSession.currentPermissionState() {
+        case .authorized:
+            break
+        case .notDetermined:
+            activeJevVoiceFunctionKeyHold = .blocked(whenReleased: .requestMicrophoneAndSpeechPermission)
+            return
+        case .denied:
+            activeJevVoiceFunctionKeyHold = .blocked(whenReleased: .showHint(Self.jevVoicePermissionDeniedMessage))
+            return
+        }
+
+        let holdID = UUID()
+        let dictationSession = OnDeviceDictationSession()
+        dictationSession.onLiveTranscriptChanged = { [weak self] liveTranscript in
+            guard let self, self.jevVoiceDictationHoldID == holdID else { return }
+            self.textCommandDraftText = liveTranscript
+        }
+        do {
+            try dictationSession.start()
+        } catch {
+            activeJevVoiceFunctionKeyHold = .blocked(whenReleased: .showHint(error.localizedDescription))
+            return
+        }
+
+        let wasPanelVisibleBeforeHold = textCommandPanelManager.isVisible
+        let draftTextBeforeHold = textCommandDraftText
+        if !wasPanelVisibleBeforeHold {
+            presentTextCommandPanel(takingKeyboardFocus: false)
+            textCommandDraftText = ""
+        }
+
+        jevVoiceDictationHoldID = holdID
+        jevVoiceDictationSession = dictationSession
+        activeJevVoiceFunctionKeyHold = .listening(
+            holdID: holdID,
+            draftTextBeforeHold: draftTextBeforeHold,
+            wasPanelVisibleBeforeHold: wasPanelVisibleBeforeHold
+        )
+        isJevVoiceDictationListening = true
+        textCommandActivityText = "Listening… release Fn to run"
+    }
+
+    private func endJevVoiceFunctionKeyHoldByRelease() {
+        guard let finishedHold = activeJevVoiceFunctionKeyHold else { return }
+        activeJevVoiceFunctionKeyHold = nil
+
+        switch finishedHold {
+        case .blocked(whenReleased: .showHint(let hintMessage)):
+            presentTransientOverlayHint(hintMessage)
+        case .blocked(whenReleased: .requestMicrophoneAndSpeechPermission):
+            presentTransientOverlayHint("Allow Microphone and Speech Recognition, then hold Fn again")
+            Task { [weak self] in
+                let didGrantPermissions = await OnDeviceDictationSession.requestPermissions()
+                self?.presentTransientOverlayHint(didGrantPermissions
+                    ? "Voice is ready. Hold Fn and say your task"
+                    : Self.jevVoicePermissionDeniedMessage)
+            }
+        case .listening(let holdID, _, _):
+            finishJevVoiceDictationAndSubmitTask(holdID: holdID)
+        }
+    }
+
+    private func endJevVoiceFunctionKeyHoldByChord() {
+        guard let cancelledHold = activeJevVoiceFunctionKeyHold else { return }
+        activeJevVoiceFunctionKeyHold = nil
+        // A blocked hold showed nothing, so there's nothing to undo.
+        guard case let .listening(holdID, draftTextBeforeHold, wasPanelVisibleBeforeHold) = cancelledHold,
+              jevVoiceDictationHoldID == holdID else { return }
+
+        cancelJevVoiceDictation()
+        textCommandDraftText = draftTextBeforeHold
+        textCommandActivityText = nil
+        if !wasPanelVisibleBeforeHold {
+            textCommandPanelManager.hide()
+        }
+    }
+
+    private func finishJevVoiceDictationAndSubmitTask(holdID: UUID) {
+        guard jevVoiceDictationHoldID == holdID,
+              let dictationSession = jevVoiceDictationSession else { return }
+        isJevVoiceDictationListening = false
+        textCommandActivityText = "Transcribing…"
+        // Fn is up, so no chord key can follow any more. Take keyboard focus
+        // so Escape can stop the run, as it does for Ctrl+K.
+        textCommandPanelManager.takeKeyboardFocus()
+
+        Task { [weak self] in
+            let finalTranscript = await dictationSession.finish()
+            guard let self, self.jevVoiceDictationHoldID == holdID else { return }
+            self.jevVoiceDictationHoldID = nil
+            self.jevVoiceDictationSession = nil
+
+            guard !finalTranscript.isEmpty else {
+                self.textCommandActivityText = "Didn't catch that. Hold Fn and try again"
+                self.textCommandFocusRequest = UUID()
+                return
+            }
+            // Leave the heard task in the input so it's visible during the
+            // run and can be edited and re-run with Return afterwards.
+            self.textCommandDraftText = finalTranscript
+            PipelineLogStore.shared.record(category: "text_command", name: "voice_transcribed",
+                status: "on_device", message: finalTranscript)
+            self.submitTextCommand(finalTranscript)
+        }
+    }
+
+    private func cancelJevVoiceDictation() {
+        activeJevVoiceFunctionKeyHold = nil
+        guard jevVoiceDictationHoldID != nil || jevVoiceDictationSession != nil else { return }
+        jevVoiceDictationSession?.cancel()
+        jevVoiceDictationSession = nil
+        jevVoiceDictationHoldID = nil
+        isJevVoiceDictationListening = false
     }
 
     private func handleRadialInputSwitcherTransition(_ transition: GlobalRadialInputShortcutMonitor.SwitcherTransition) {
@@ -1681,9 +1874,13 @@ final class CompanionManager: ObservableObject {
     }
 
     func dismissTextCommandPanel() {
+        cancelJevVoiceDictation()
         cancelTextCommand()
         textCommandPanelManager.hide()
         textCommandActivityText = nil
+        // Escape is intercepted by the panel before the field's onExitCommand
+        // runs, so clear the draft here or it would reappear on the next open.
+        textCommandDraftText = ""
     }
 
     private func captureTargetAppContextForShortcutPress(reason: String) {

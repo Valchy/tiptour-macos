@@ -101,7 +101,8 @@ enum KeychainStore {
         set { set(newValue ?? "", forKey: "geminiAPIKey") }
     }
 
-    /// TypeSafe API key for JEV text commands.
+    /// JEV key: a TypeSafe key, or a Vercel AI Gateway key (vck_…), which
+    /// routes JEV through the gateway (see JevRoute).
     static var jevAPIKey: String? {
         get { get(forKey: "jevAPIKey") }
         set { set(newValue ?? "", forKey: "jevAPIKey") }

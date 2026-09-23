@@ -10,11 +10,11 @@ nonisolated enum TipTourMode: String, CaseIterable, Identifiable {
     var shortcut: String { self == .jev ? "Ctrl+K" : "Ctrl+Option" }
     var systemImage: String { self == .jev ? "text.cursor" : "waveform" }
     var summary: String {
-        self == .jev ? "Type a task. JEV finds and clicks screen controls."
+        self == .jev ? "Type a task, or hold Fn and say it. JEV finds and clicks screen controls."
             : "Talk naturally. Gemini can click, type, and guide you."
     }
     var privacySummary: String {
-        self == .jev ? "Your task and detected screen labels go to TypeSafe. Images stay on your Mac."
+        self == .jev ? "Your task and detected screen labels go to TypeSafe, directly or through Vercel AI Gateway. Images and voice stay on your Mac."
             : "Your voice and optional screenshots go to Google."
     }
 

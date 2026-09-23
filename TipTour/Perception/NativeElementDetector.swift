@@ -71,7 +71,12 @@ class NativeElementDetector {
         }
 
         do {
-            let mlModel = try MLModel(contentsOf: modelURL)
+            // Keep the detector off the GPU. On macOS 26 with M5 chips, Core ML's
+            // GPU path (MPSGraph) hits a Metal assertion on this YOLO model and
+            // aborts the whole app. The Neural Engine is fast enough (~10 ms).
+            let modelConfiguration = MLModelConfiguration()
+            modelConfiguration.computeUnits = .cpuAndNeuralEngine
+            let mlModel = try MLModel(contentsOf: modelURL, configuration: modelConfiguration)
             yoloModel = try VNCoreMLModel(for: mlModel)
             print("[NativeDetector] YOLO model loaded successfully")
         } catch {

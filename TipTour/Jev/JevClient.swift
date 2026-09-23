@@ -87,11 +87,13 @@ nonisolated enum JevError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .missingAPIKey:
-            return "No TypeSafe API key. Add one in TipTour settings to use the Jev loop."
+            return "No JEV key. Add a TypeSafe or Vercel AI Gateway key in TipTour settings to use the Jev loop."
         case let .tooManyChoices(count):
             return "Jev accepts at most \(JevClient.maxChoices) options in one question; this call had \(count)."
         case let .http(status, body):
-            return "Jev returned \(status): \(body.prefix(300))"
+            // Long enough to include the gateway's routing details, which say
+            // which provider failed and why. Error bodies never echo the key.
+            return "Jev returned \(status): \(body.prefix(2000))"
         case let .malformed(detail):
             return "Jev sent something unreadable: \(detail)"
         }
@@ -104,6 +106,7 @@ actor JevClient {
     static let endpoint = URL(string: "https://api.typesafe.ai/v1/systemone")!
     static let model = "jev-latest"
     static let maxChoices = 255
+    static let transientStatusCodes: Set<Int> = [502, 503, 504]
 
     static let shared = JevClient()
 
@@ -142,20 +145,34 @@ actor JevClient {
             }
         }
 
-        let body: [String: Any] = [
-            "state": state,
-            "model": Self.model,
-            "questions": questions.mapValues(\.payload)
-        ]
+        let jevRoute = JevRoute(apiKey: key)
+        let request: URLRequest
+        switch jevRoute {
+        case .typeSafeDirect:
+            let body: [String: Any] = [
+                "state": state,
+                "model": Self.model,
+                "questions": questions.mapValues(\.payload)
+            ]
 
-        var request = URLRequest(url: Self.endpoint)
-        request.httpMethod = "POST"
-        request.setValue("Bearer \(key)", forHTTPHeaderField: "authorization")
-        request.setValue("application/json", forHTTPHeaderField: "content-type")
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+            var typeSafeRequest = URLRequest(url: Self.endpoint)
+            typeSafeRequest.httpMethod = "POST"
+            typeSafeRequest.setValue("Bearer \(key)", forHTTPHeaderField: "authorization")
+            typeSafeRequest.setValue("application/json", forHTTPHeaderField: "content-type")
+            typeSafeRequest.httpBody = try JSONSerialization.data(withJSONObject: body)
+            request = typeSafeRequest
+        case .vercelAIGateway:
+            request = try JevVercelGateway.urlRequest(apiKey: key, state: state, questions: questions)
+        }
 
         let started = DispatchTime.now().uptimeNanoseconds
-        let (data, response) = try await session.data(for: request)
+        var (data, response) = try await session.data(for: request)
+        // 502/503/504 from the gateway or TypeSafe are usually momentary
+        // capacity blips; one quick retry saves the whole run.
+        if let http = response as? HTTPURLResponse, Self.transientStatusCodes.contains(http.statusCode) {
+            try await Task.sleep(nanoseconds: 400_000_000)
+            (data, response) = try await session.data(for: request)
+        }
         let elapsed = Int((DispatchTime.now().uptimeNanoseconds - started) / 1_000_000)
 
         guard let http = response as? HTTPURLResponse else {
@@ -167,7 +184,13 @@ actor JevClient {
 
         let decoded: JevResponse
         do {
-            decoded = try JSONDecoder().decode(JevResponse.self, from: data)
+            switch jevRoute {
+            case .typeSafeDirect:
+                decoded = try JSONDecoder().decode(JevResponse.self, from: data)
+            case .vercelAIGateway:
+                decoded = try JevVercelGateway.decodeResponse(
+                    data, noulQuestionIDs: JevVercelGateway.noulQuestionIDs(in: questions))
+            }
         } catch {
             throw JevError.malformed(error.localizedDescription)
         }

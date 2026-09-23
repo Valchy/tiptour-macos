@@ -5,7 +5,9 @@
 	<key>LSUIElement</key>
 	<true/>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>TipTour uses your microphone so you can talk to it.</string>
+	<string>TipTour uses your microphone so you can talk to it: Gemini voice, or holding Fn to tell JEV a task.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>While you hold Fn, TipTour turns your voice into a JEV task using on-device speech recognition. Audio never leaves your Mac.</string>
 	<key>NSScreenCaptureUsageDescription</key>
 	<string>TipTour needs screen recording access to see what's on your screen and point at the right elements.</string>
 </dict>
