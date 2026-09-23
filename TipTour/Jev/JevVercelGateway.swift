@@ -3,23 +3,33 @@ import Foundation
 // MARK: - Route
 
 /// Which service carries JEV decisions. The single JEV key field accepts either
-/// a TypeSafe key or a Vercel AI Gateway key, and the key itself picks the
-/// route: Vercel AI Gateway keys always start with "vck_".
+/// a TypeSafe key, a Vercel AI Gateway key or an OpenRouter key, and the key
+/// itself picks the route: Vercel AI Gateway keys start with "vck_",
+/// OpenRouter keys with "sk-or-".
 nonisolated enum JevRoute: Equatable {
     case typeSafeDirect
     case vercelAIGateway
+    case openRouter
 
     static let vercelAIGatewayKeyPrefix = "vck_"
+    static let openRouterKeyPrefix = "sk-or-"
 
     init(apiKey: String) {
         let trimmedAPIKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        self = trimmedAPIKey.hasPrefix(Self.vercelAIGatewayKeyPrefix) ? .vercelAIGateway : .typeSafeDirect
+        if trimmedAPIKey.hasPrefix(Self.vercelAIGatewayKeyPrefix) {
+            self = .vercelAIGateway
+        } else if trimmedAPIKey.hasPrefix(Self.openRouterKeyPrefix) {
+            self = .openRouter
+        } else {
+            self = .typeSafeDirect
+        }
     }
 
     var displayName: String {
         switch self {
         case .typeSafeDirect: return "TypeSafe direct"
         case .vercelAIGateway: return "Vercel AI Gateway"
+        case .openRouter: return "OpenRouter"
         }
     }
 }
@@ -100,7 +110,7 @@ nonisolated enum JevVercelGateway {
         return request
     }
 
-    static func decodeResponse(_ data: Data, noulQuestionIDs: Set<String>) throws -> JevResponse {
+    static func decodeResponse(_ data: Data, noulQuestionIDs: Set<String>, modelID: String = modelID) throws -> JevResponse {
         let gatewayResponse = try JSONDecoder().decode(GatewayEvaluationResponse.self, from: data)
         var answers: [String: JevAnswer] = [:]
         for (questionID, gatewayAnswer) in gatewayResponse.answers {
@@ -144,7 +154,7 @@ nonisolated enum JevVercelGateway {
     }
 
     private struct GatewayEvaluationAnswer: Decodable {
-        let type: String
+        let type: String?
         let choice: String?
         let score: Double?
         /// Only on "boolean" answers: the model's P(true).
@@ -153,8 +163,58 @@ nonisolated enum JevVercelGateway {
     }
 
     /// Decoded as Double because the spec only promises JSON numbers.
+    /// Vercel sends camelCase, OpenRouter snake_case.
     private struct GatewayEvaluationUsage: Decodable {
         let inputTokens: Double?
         let outputTokens: Double?
+
+        enum CodingKeys: String, CodingKey {
+            case inputTokens, outputTokens
+            case input_tokens, output_tokens
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            inputTokens = try container.decodeIfPresent(Double.self, forKey: .inputTokens)
+                ?? container.decodeIfPresent(Double.self, forKey: .input_tokens)
+            outputTokens = try container.decodeIfPresent(Double.self, forKey: .outputTokens)
+                ?? container.decodeIfPresent(Double.self, forKey: .output_tokens)
+        }
+    }
+}
+
+// MARK: - OpenRouter transport
+
+/// Sends Jev questions to OpenRouter's alpha Decisions endpoint (model
+/// "~typesafe/jev-latest"). Note the endpoint sits at the origin, not under
+/// /api/v1. Questions use the same choice-only encoding as the Vercel route,
+/// and answers go through the same decoder.
+nonisolated enum JevOpenRouter {
+    static let endpoint = URL(string: "https://openrouter.ai/api/alpha/decisions")!
+    static let modelID = "~typesafe/jev-latest"
+
+    static func urlRequest(
+        apiKey: String,
+        state: [String: Any],
+        questions: [String: JevQuestion]
+    ) throws -> URLRequest {
+        let body: [String: Any] = [
+            "model": modelID,
+            "state": state,
+            "questions": questions.mapValues(JevVercelGateway.questionPayload),
+            // Keep screen text out of provider logs and training, and never
+            // silently fall back to a different provider.
+            "provider": ["data_collection": "deny", "zdr": true, "allow_fallbacks": false]
+        ]
+        var request = URLRequest(url: endpoint)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "authorization")
+        request.setValue("application/json", forHTTPHeaderField: "content-type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        return request
+    }
+
+    static func decodeResponse(_ data: Data, noulQuestionIDs: Set<String>) throws -> JevResponse {
+        try JevVercelGateway.decodeResponse(data, noulQuestionIDs: noulQuestionIDs, modelID: modelID)
     }
 }

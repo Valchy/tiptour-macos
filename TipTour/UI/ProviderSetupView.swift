@@ -78,7 +78,7 @@ struct ProviderKeyCard: View {
                 .foregroundColor(DS.Colors.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
             if mode == .jev {
-                Text("Paste a TypeSafe key, or a Vercel AI Gateway key (vck_…). Gateway requests ask for zero data retention.")
+                Text("Paste a TypeSafe key, a Vercel AI Gateway key (vck_…) or an OpenRouter key (sk-or-…). Gateway and OpenRouter requests ask for zero data retention.")
                     .font(.system(size: 11))
                     .foregroundColor(DS.Colors.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)

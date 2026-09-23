@@ -87,7 +87,7 @@ nonisolated enum JevError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .missingAPIKey:
-            return "No JEV key. Add a TypeSafe or Vercel AI Gateway key in TipTour settings to use the Jev loop."
+            return "No JEV key. Add a TypeSafe, Vercel AI Gateway or OpenRouter key in TipTour settings to use the Jev loop."
         case let .tooManyChoices(count):
             return "Jev accepts at most \(JevClient.maxChoices) options in one question; this call had \(count)."
         case let .http(status, body):
@@ -163,6 +163,8 @@ actor JevClient {
             request = typeSafeRequest
         case .vercelAIGateway:
             request = try JevVercelGateway.urlRequest(apiKey: key, state: state, questions: questions)
+        case .openRouter:
+            request = try JevOpenRouter.urlRequest(apiKey: key, state: state, questions: questions)
         }
 
         let started = DispatchTime.now().uptimeNanoseconds
@@ -189,6 +191,9 @@ actor JevClient {
                 decoded = try JSONDecoder().decode(JevResponse.self, from: data)
             case .vercelAIGateway:
                 decoded = try JevVercelGateway.decodeResponse(
+                    data, noulQuestionIDs: JevVercelGateway.noulQuestionIDs(in: questions))
+            case .openRouter:
+                decoded = try JevOpenRouter.decodeResponse(
                     data, noulQuestionIDs: JevVercelGateway.noulQuestionIDs(in: questions))
             }
         } catch {

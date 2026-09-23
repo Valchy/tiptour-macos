@@ -128,6 +128,7 @@ struct JevTests {
         #expect(JevRoute(apiKey: "vck_test") == .vercelAIGateway)
         #expect(JevRoute(apiKey: "  vck_test\n") == .vercelAIGateway)
         #expect(JevRoute(apiKey: "ts_test") == .typeSafeDirect)
+        #expect(JevRoute(apiKey: "sk-or-v1-test") == .openRouter)
 
         let request = try JevVercelGateway.urlRequest(apiKey: "vck_test", state: ["task": "Save"], questions: [
             "done": .noul(instructions: "Done?"),
@@ -221,5 +222,25 @@ struct JevTests {
             modifierFlagsRawValue: 0, systemDefinedEventSubtype: 8) == .otherKeyOrModifierActivity)
         #expect(FunctionKeyPushToTalkShortcut.keyActivity(eventTypeRawValue: 14, keyCode: 0,
             modifierFlagsRawValue: 0, systemDefinedEventSubtype: 7) == .irrelevant)
+    }
+
+    @Test func openRouterRequestUsesDecisionsEndpointAndSnakeCaseUsage() throws {
+        let request = try JevOpenRouter.urlRequest(apiKey: "sk-or-v1-test", state: ["task": "Save"], questions: [
+            "done": .noul(instructions: "Done?")
+        ])
+        #expect(request.url?.absoluteString == "https://openrouter.ai/api/alpha/decisions")
+        #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer sk-or-v1-test")
+        let requestBodyData = try #require(request.httpBody)
+        let body = try #require(JSONSerialization.jsonObject(with: requestBodyData) as? [String: Any])
+        #expect(body["model"] as? String == "~typesafe/jev-latest")
+        #expect((body["provider"] as? [String: Any])?["allow_fallbacks"] as? Bool == false)
+
+        let response = try JevOpenRouter.decodeResponse(Data(#"""
+            {"answers":{"done":{"choice":"yes","probabilities":{"yes":0.8,"no":0.2}}},
+             "usage":{"input_tokens":42,"output_tokens":3}}
+            """#.utf8), noulQuestionIDs: ["done"])
+        #expect(response.answers["done"]?.noul == 0.8)
+        #expect(response.usage?.input_tokens == 42)
+        #expect(response.model == "~typesafe/jev-latest")
     }
 }

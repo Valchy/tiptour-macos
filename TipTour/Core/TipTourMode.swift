@@ -14,7 +14,7 @@ nonisolated enum TipTourMode: String, CaseIterable, Identifiable {
             : "Talk naturally. Gemini can click, type, and guide you."
     }
     var privacySummary: String {
-        self == .jev ? "Your task and detected screen labels go to TypeSafe, directly or through Vercel AI Gateway. Images and voice stay on your Mac."
+        self == .jev ? "Your task and detected screen labels go to TypeSafe, directly or through Vercel AI Gateway or OpenRouter. Images and voice stay on your Mac."
             : "Your voice and optional screenshots go to Google."
     }
 
